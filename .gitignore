@@ -1,0 +1,13 @@
+/build_output/
+/ccache/
+/logs/
+out/
+*.log
+*.rej
+*.orig
+.DS_Store
+/prebuilt/*.apk
+archive/
+boot-logs*/
+diag/
+*_Stock_ROM_*.zip
