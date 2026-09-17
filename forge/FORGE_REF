@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=d3dd6f622f52ce0f86c95242c1db950bc7b8c727
-subject=rom-forge: LineageOS build engine
-synced=2026-09-17T17:47:19Z
+commit=61d028c6de0ce86027ae940462fe121b6d1b7c10
+subject=sync-forge: follow the rom-forge recorded in FORGE_REF, not upstream by default
+synced=2026-09-17T19:30:23Z
