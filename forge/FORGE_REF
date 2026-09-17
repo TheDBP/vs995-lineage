@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=e877c0d5d8ed3b8f359885932198303d397ed7d8
-subject=nextcloud-core: Files, Talk and NextPush as their own option
-synced=2026-09-17T22:05:21Z
+commit=ebc6c74aedd7936a3459947077cc000abc9537d9
+subject=FDROID_PINS reaches the fetchers; device.conf.example matches the template
+synced=2026-09-17T22:50:43Z
