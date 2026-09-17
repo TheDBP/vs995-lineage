@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=ebc6c74aedd7936a3459947077cc000abc9537d9
-subject=FDROID_PINS reaches the fetchers; device.conf.example matches the template
-synced=2026-09-17T22:50:43Z
+commit=48f2319f55adce69d950115f03836e00f0ede6d0
+subject=fdroid: skip_preprocessed_apk_checks on a priv-app with compressed dex
+synced=2026-09-17T23:24:38Z
