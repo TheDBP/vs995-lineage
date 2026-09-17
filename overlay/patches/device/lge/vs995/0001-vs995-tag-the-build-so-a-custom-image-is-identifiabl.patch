@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 12:00:00 -0400
+Subject: [PATCH] vs995: tag the build so a custom image is identifiable
+
+Puts the build tag in the zip filename and ro.lineage.version
+(...-UNOFFICIAL-<tag>-vs995). Overridable via TURBO_BUILD_ID, which is how the
+forge gives each preset a distinct tag; "turbo" when unset.
+
+Set before the common_full_phone inherit: vendor/lineage/config/version.mk reads
+TARGET_UNOFFICIAL_BUILD_ID when it is included, so a later assignment is ignored.
+---
+ lineage_vs995.mk | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/lineage_vs995.mk b/lineage_vs995.mk
+--- a/lineage_vs995.mk
++++ b/lineage_vs995.mk
+@@ -18,6 +18,9 @@
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit.mk)
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/full_base_telephony.mk)
+ 
++# Build identity: ...-UNOFFICIAL-<tag>-vs995. The forge sets TURBO_BUILD_ID per preset.
++TARGET_UNOFFICIAL_BUILD_ID := $(if $(TURBO_BUILD_ID),$(TURBO_BUILD_ID),turbo)
++
+ # Inherit some common Lineage stuff.
+ $(call inherit-product, vendor/lineage/config/common_full_phone.mk)
+ 

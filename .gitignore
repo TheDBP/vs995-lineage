@@ -1,0 +1,13 @@
+# heavy build state — re-created by the forge; never committed
+/build_output/
+out/
+*.log
+*.rej
+*.orig
+.DS_Store
+
+# personal, per-checkout build settings (EXTRA_OPTIONS etc) -- never published
+/device.conf.local
+
+# reclaimed manufacturer ROM, used to extract OEM assets -- never committed
+Ether_Stock_ROM_*.zip
