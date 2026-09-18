@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=0f170a712b7c647958c9674c1a4292b3d65df7ba
-subject=fulguris: option bundling Fulguris as the browser
-synced=2026-09-18T14:00:47Z
+commit=0cd24589451653650780850bdb393a6eb443fea9
+subject=docs: fulguris in the fetcher and option lists
+synced=2026-09-18T17:02:32Z
