@@ -77,6 +77,7 @@ work on any device rather than being wired into this tree.
 | `dark-default` | Default to dark theme |
 | `fdroid` | F-Droid app store + Privileged Extension (silent installs/updates) |
 | `firefox` | Firefox (Fennec F-Droid) as the browser, replacing Jelly |
+| `fulguris` | Fulguris as the browser, replacing Jelly — a WebView browser, 9 MB where Fennec stages 320 MB. Mutually exclusive with `firefox` |
 | `gapps` | Google apps: Play Store and GMS from MindTheGapps, plus Google's versions of the stock apps |
 | `google-feed-off` | Google feed (-1 screen) off by default |
 | `home-defaults` | Home screen defaults: no icon labels, no auto-add of new apps |
