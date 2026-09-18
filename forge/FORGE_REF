@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=23fc9feb0a04ed5eae5a416744ca06b1ab1c5ccc
-subject=bootstrap: keep each build's zip and images in build_output/artifacts/
-synced=2026-09-18T01:56:02Z
+commit=3f2abdce5e440c8adc4618da1921138c22e252cc
+subject=nextcloud-core: add DAVx5
+synced=2026-09-18T12:04:51Z
