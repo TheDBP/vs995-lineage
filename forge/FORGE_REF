@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=9e214a5e68a1adedfe42cb3f22f413cd4c03d853
-subject=tools: run-one.sh, the one-build-at-a-time launcher
-synced=2026-09-19T17:48:06Z
+commit=ead77c0e9ed4e3f42ede112abcf262b32343ca5c
+subject=options: lineage-24.0 patch sets for the app options and gapps
+synced=2026-09-19T17:54:33Z
