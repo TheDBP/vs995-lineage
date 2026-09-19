@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=e7b2c9f2d5180d6f4b7ab79be0130ffe0f59f695
-subject=firefox, fdroid: check where the module actually is on branches without a patch
-synced=2026-09-19T17:57:17Z
+commit=c4317566d7b1829e8e0966337175bc4cb03c1e5f
+subject=connectbot: option bundling ConnectBot; fulguris on every branch
+synced=2026-09-19T18:42:52Z
