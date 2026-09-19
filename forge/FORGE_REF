@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=ead77c0e9ed4e3f42ede112abcf262b32343ca5c
-subject=options: lineage-24.0 patch sets for the app options and gapps
-synced=2026-09-19T17:54:33Z
+commit=e7b2c9f2d5180d6f4b7ab79be0130ffe0f59f695
+subject=firefox, fdroid: check where the module actually is on branches without a patch
+synced=2026-09-19T17:57:17Z
