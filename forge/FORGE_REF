@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=0cd24589451653650780850bdb393a6eb443fea9
-subject=docs: fulguris in the fetcher and option lists
-synced=2026-09-18T17:02:32Z
+commit=9e214a5e68a1adedfe42cb3f22f413cd4c03d853
+subject=tools: run-one.sh, the one-build-at-a-time launcher
+synced=2026-09-19T17:48:06Z
