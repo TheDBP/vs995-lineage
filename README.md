@@ -47,8 +47,8 @@ behaviour of its own.
 | preset | tag | adds over `clean` |
 |---|---|---|
 | `clean` | `turbo-clean` | nothing — this is the baseline |
-| `libre` | `turbo-libre` | `fdroid`, `firefox`, `k9`, `termoneplus`, `kdeconnect` |
-| `full` | `turbo` | `fdroid`, `firefox`, `gapps`, `k9`, `termoneplus`, `kdeconnect`, `root` |
+| `libre` | `turbo-libre` | `fdroid`, `fulguris`, `k9`, `termoneplus`, `kdeconnect`, `connectbot`, `linphone` |
+| `full` | `turbo` | `fdroid`, `fulguris`, `gapps`, `k9`, `termoneplus`, `kdeconnect`, `root`, `connectbot`, `linphone` |
 
 Every preset also carries the shared set, which is what makes this build look and behave the way
 it does regardless of which preset you pick:
@@ -76,7 +76,9 @@ work on any device rather than being wired into this tree.
 | `advanced-restart` | Advanced restart in the power menu |
 | `dark-default` | Default to dark theme |
 | `fdroid` | F-Droid app store + Privileged Extension (silent installs/updates) |
-| `firefox` | Firefox (Fennec F-Droid) as the browser, replacing Jelly |
+| `firefox` | Firefox (Fennec F-Droid) as the browser, replacing Jelly — still available, but 320 MB staged, so no preset carries it now |
+| `connectbot` | ConnectBot: an SSH client with saved hosts, keys and port forwarding |
+| `linphone` | Linphone: a SIP client, for voice over data where the device has no VoLTE |
 | `fulguris` | Fulguris as the browser, replacing Jelly — a WebView browser, 9 MB where Fennec stages 320 MB. Mutually exclusive with `firefox` |
 | `gapps` | Google apps: Play Store and GMS from MindTheGapps, plus Google's versions of the stock apps |
 | `google-feed-off` | Google feed (-1 screen) off by default |
@@ -120,7 +122,8 @@ One patch per thing it enables.
 ## Flash it
 
 Prebuilt images are on the [Releases](https://github.com/TheDBP/vs995-lineage/releases) page —
-always the `libre` preset: LineageOS plus F-Droid, Firefox, K-9 Mail, TermOne Plus and KDE Connect,
+always the `libre` preset: LineageOS plus F-Droid, Fulguris, K-9 Mail, TermOne Plus, KDE Connect,
+ConnectBot and Linphone,
 no Google apps, not rooted. Each release is two files: the ROM zip and a `<name>-recovery.img`
 (Lineage recovery from the same build).
 
@@ -133,7 +136,7 @@ model, and `vs995` is the Verizon variant. Do not follow `h918` or `us996` guide
 - Minimal home screen; Google feed (−1 screen) off
 - NFC off by default; LiveDisplay off; advanced restart in the power menu
 - Setup wizard skips the recovery/metrics/backup nags
-- `libre` and `full`: Firefox, F-Droid, K-9 Mail, TermOne Plus, KDE Connect; `full` adds GApps and Magisk
+- `libre` and `full`: Fulguris, F-Droid, K-9 Mail, TermOne Plus, KDE Connect, ConnectBot, Linphone; `full` adds GApps and Magisk
 - Responsiveness tuning on the CPU governor (see below)
 
 ### About the tuning
