@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=8892e052c3fe3992690c0c1c4a4cb46cb787188a
-subject=engine patches: make SOONG_MEM_LIMIT actually reach soong_build
-synced=2026-09-20T08:24:38Z
+commit=fd398bdce94403f851dab4d148ab637cf60e9175
+subject=patches: lineage-24.0 vendor/lineage — restore GCC-assisted kernel builds for pre-5.10 kernels
+synced=2026-09-20T12:51:45Z
