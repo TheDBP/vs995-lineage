@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=83d879e31f90d28366018c0e214d45bb8edcd006
-subject=tools: add find-soong-namespace-drift.sh, the pre-build check for a branch bump
-synced=2026-09-20T02:05:59Z
+commit=8892e052c3fe3992690c0c1c4a4cb46cb787188a
+subject=engine patches: make SOONG_MEM_LIMIT actually reach soong_build
+synced=2026-09-20T08:24:38Z
