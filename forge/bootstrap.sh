@@ -6,6 +6,10 @@
 #   OPTIONS="gapps root" ./forge/bootstrap.sh   # an ad-hoc set
 # One run builds one image.
 #   JOBS=8  SYNC_JOBS="4 2 1"  BUILD_ROOT=/path  # overrides
+#   SOONG_MEM_LIMIT=20GiB                        # cap soong_build's heap on a small machine
+# JOBS sizes the COMPILE phase. It does nothing for analysis: soong_build is one process whose
+# peak is set by the build graph (~24 GB on a 24.0 tree), so on a 32 GB box the fix is
+# SOONG_MEM_LIMIT, not a lower JOBS.
 # OEM builds (the oem option) need a stock ROM: STOCK_ROM=path, a zip matching STOCK_ROM_GLOB, or STOCK_ROM_URL.
 set -euo pipefail
 
@@ -275,6 +279,15 @@ if [ "$WANT_OEM" = true ]; then
 fi
 
 GAPPS_DL_URL=""
+# WITH_GAPPS_EXTRAS=false narrows gapps to MindTheGapps: Play Store and GMS from the manifest
+# repo, and none of the Google app swaps, which are what the NikGapps zip supplies. It exists for
+# an Android version NikGapps has not released for yet. Explicit per device, never inferred: a
+# build that quietly drops the swaps looks identical until the phone is in your hand, which is
+# the failure the check below exists for. options/gapps/require.sh reads the same switch.
+if [ "$WANT_GAPPS" = true ] && [ "${WITH_GAPPS_EXTRAS:-true}" != true ]; then
+  echo "   GApps: MindTheGapps only (WITH_GAPPS_EXTRAS=false) -- no Google app swaps"
+  WANT_GAPPS=false
+fi
 if [ "$WANT_GAPPS" = true ]; then
   if [ -n "${GAPPS_ZIP:-}" ]; then
     [ -f "$GAPPS_ZIP" ] || { echo "!! GAPPS_ZIP=$GAPPS_ZIP does not exist" >&2; exit 1; }
