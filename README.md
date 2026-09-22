@@ -48,7 +48,7 @@ behaviour of its own.
 |---|---|---|
 | `clean` | `turbo-clean` | nothing — this is the baseline |
 | `libre` | `turbo-libre` | `fdroid`, `fulguris`, `k9`, `termoneplus`, `kdeconnect`, `connectbot`, `linphone` |
-| `full` | `turbo` | `fdroid`, `fulguris`, `gapps`, `k9`, `termoneplus`, `kdeconnect`, `root`, `connectbot`, `linphone` |
+| `full` | `turbo` | `fdroid`, `fulguris`, `gapps`, `k9`, `termoneplus`, `kdeconnect`, `connectbot`, `linphone` |
 | `stock` | `stock` | nothing, and **not the shared set either** — plain LineageOS plus only the patches that make this hardware run. Reserved by the forge, so it needs no row in `device.conf`. Use it to tell our bugs from upstream's. |
 
 Every preset also carries the shared set, which is what makes this build look and behave the way
