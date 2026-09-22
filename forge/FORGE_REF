@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=1c2d4f27f43e7afa7a8c0348ec01ba0cd1ae79a4
-subject=teal-skin: stop pinning color_source, so the wallpaper drives the palette
-synced=2026-09-22T22:50:32Z
+commit=4d3e81cfc9cb278295415132fda2b7738e708b26
+subject=extract-gapps-apps: a GApps core with no stock apps is not a failure
+synced=2026-09-22T23:01:29Z
