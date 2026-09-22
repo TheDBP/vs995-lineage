@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=3a7a08630e3df6feaca7902e8df1cdacbf1bdac6
-subject=kernel-configs: bpf-events, to register the tracing BPF program types
-synced=2026-09-22T17:45:06Z
+commit=9e42fba63c629bcdcc216826d4f6b3030dcc09d1
+subject=docs: index the dead-panel doc, and warn about a stale BASE_REF
+synced=2026-09-22T22:29:10Z
