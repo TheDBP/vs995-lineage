@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=1daeecdda24c562278e78849eb4866d838ec9fd7
-subject=docs: point the dead-panel doc at the drm-trace option
-synced=2026-09-22T22:42:05Z
+commit=1c2d4f27f43e7afa7a8c0348ec01ba0cd1ae79a4
+subject=teal-skin: stop pinning color_source, so the wallpaper drives the palette
+synced=2026-09-22T22:50:32Z
