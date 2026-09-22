@@ -49,6 +49,7 @@ behaviour of its own.
 | `clean` | `turbo-clean` | nothing — this is the baseline |
 | `libre` | `turbo-libre` | `fdroid`, `fulguris`, `k9`, `termoneplus`, `kdeconnect`, `connectbot`, `linphone` |
 | `full` | `turbo` | `fdroid`, `fulguris`, `gapps`, `k9`, `termoneplus`, `kdeconnect`, `root`, `connectbot`, `linphone` |
+| `stock` | `stock` | nothing, and **not the shared set either** — plain LineageOS plus only the patches that make this hardware run. Reserved by the forge, so it needs no row in `device.conf`. Use it to tell our bugs from upstream's. |
 
 Every preset also carries the shared set, which is what makes this build look and behave the way
 it does regardless of which preset you pick:
@@ -75,6 +76,7 @@ work on any device rather than being wired into this tree.
 |---|---|
 | `advanced-restart` | Advanced restart in the power menu |
 | `dark-default` | Default to dark theme |
+| `bringup` | Debug build: adbd from boot with no authorisation prompt, plus persistent logcat, so a build that never reaches the lock screen can still be traced. **Never hand out an image built with this** — it accepts adb from any host. |
 | `fdroid` | F-Droid app store + Privileged Extension (silent installs/updates) |
 | `firefox` | Firefox (Fennec F-Droid) as the browser, replacing Jelly — still available, but 320 MB staged, so no preset carries it now |
 | `connectbot` | ConnectBot: an SSH client with saved hosts, keys and port forwarding |
@@ -90,6 +92,7 @@ work on any device rather than being wired into this tree.
 | `k9` | K-9 Mail (the Thunderbird for Android codebase) as the mail client |
 | `nav-icons` | Nextbit Robin style nav-bar icons, drawn as scalable tintable vectors (on every preset) |
 | `nextcloud` | Nextcloud bundle: Files, Talk, NextPush, Deck, NC Passwords, Notes, DAVx5, Tasks — the current F-Droid build of each, fetched at build time. `EXTRA_OPTIONS=nextcloud` on any preset, see *Presets* |
+| `nextcloud-core` | Nextcloud, the four that make the phone a client: Files, Talk, NextPush, DAVx5 |
 | `nfc-off` | NFC off by default |
 | `oem` | The manufacturer's own boot animation, wallpapers and sounds, reclaimed from its stock ROM — no LG pack exists, see *Presets* |
 | `root` | Magisk baked into the boot image, so the zip flashes pre-rooted |
@@ -97,6 +100,7 @@ work on any device rather than being wired into this tree.
 | `teal-skin` | Teal accent — fixed #009D94 Monet preset seed |
 | `teal-wallpaper` | Teal-shag default wallpaper (baked into framework-res) |
 | `termoneplus` | TermOne Plus terminal emulator |
+| `syncthing-fork` | Syncthing-Fork: continuous file sync between your own devices, no server or account |
 | `themed-icons` | Themed (monochrome) app icons on by default |
 
 ## Device patches
