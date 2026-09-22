@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=9e42fba63c629bcdcc216826d4f6b3030dcc09d1
-subject=docs: index the dead-panel doc, and warn about a stale BASE_REF
-synced=2026-09-22T22:29:10Z
+commit=64e0d20512c95c81ea25c078fe69098e32643095
+subject=tools: document boot-window-logcat.sh
+synced=2026-09-22T22:35:26Z
