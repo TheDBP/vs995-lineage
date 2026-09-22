@@ -32,6 +32,26 @@ for f in tombstone_[0-9]*; do case "$f" in *.pb) continue;; esac
 done | sort | uniq -c | sort -rn
 ```
 
+## Nothing reaches the boot animation
+
+That is a different problem from a loop: init dies before `zygote`. USB never enumerates, and on a
+device whose bootloader hard-resets and rewrites the ramoops region on every boot, pstore is empty.
+The order there is `tools/init-harness.sh` (bionic → `selinux_setup`, from recovery, no boot), then
+`tools/dtbo-ramoops-alt.py` + `tools/pstore-pull.sh` for `early-init` onwards (cgroups,
+`apexd-bootstrap` — its `reboot_on_failure` is a clean `reboot bootloader` ~10 s in, with nothing
+on USB and nothing in klog). Read init's `Command '...' failed:` line, not the `exited with status`
+line after it: "failed to start due to a fatal error" is the forked child giving up before exec.
+`tools/README.md`, *Bringing a kernel up*.
+
+Stuck on the OEM logo with no USB, and the console ring shows services restarting, is the next
+stage: init is fine, userspace aborts. The reasons are not in kmsg. Read `pmsg-ramoops-0` from the
+same pull (`pstore-pull.sh` decodes it): it is the last boot's logcat, tombstones included, and
+the phone has no adb to `logcat -L` with. Several vendor HALs failing on `Permission denied` for
+their `/dev` nodes with no `avc:` line anywhere is DAC, i.e. ueventd never applied the vendor
+rules — Android 17 reads `/system/etc/ueventd.rc` only, and the vendor file has to be at
+`/vendor/etc/ueventd.rc` for its `import` (system/core `1b926a344` dropped the legacy
+`/vendor/ueventd.rc` path that pre-T `first_api_level` devices were still using).
+
 ## Why pstore misleads
 
 pstore survives a reboot but not a cold power-off, and the pmsg ring is 256K–512K
@@ -61,27 +81,17 @@ flip — backport FFS AIO, or restore a blocking path in adbd.
 **Wireless adb is unaffected** — plain TCP, never touches FunctionFS. On an old-kernel device it is
 the cheaper route, but networking has to work first.
 
-If USB adb is viable, two things block it:
+If USB adb is viable, two things block it: `sys.usb.config` stays `none` until the framework sets
+it, and on `userdebug` `ro.adb.secure=1` needs a prompt the framework never draws. The `bringup`
+option (`forge/options/bringup/`) clears both from the build config — `WITH_ADB_INSECURE` (adb.secure
+0, device stays debuggable, adb on USB from init) and `persist.logd.logpersistd=logcatd` (every
+buffer kept under `/data/misc/logd/`, `adb shell logpersist.cat` to read it). Enable it per build
+with `EXTRA_OPTIONS="bringup"` in `device.conf.local`; the tag gains `-bringup`.
 
-**adbd never starts.** `sys.usb.config` stays `none` until the framework sets it, and a crashing
-system_server never gets there.
+Don't use `PRODUCT_ADB_KEYS` instead. It puts a personal `adbkey.pub` (`user@host` inside) in the
+repo, and it is redundant once `ro.adb.secure=0`.
 
-```make
-PRODUCT_PROPERTY_OVERRIDES += persist.sys.usb.config=adb
-```
-
-**adb wants authorisation.** On `userdebug` `ro.adb.secure=1`, and a crashing system_server cannot
-draw the prompt. Ship your host key:
-
-```make
-PRODUCT_ADB_KEYS := device/<vendor>/<codename>/adb_keys.pub
-```
-
-Copy `~/.android/adbkey.pub` there. Gated to `eng`/`userdebug` in `product_config.mk`, so it cannot
-leak into a `user` build.
-
-> Mark that patch TEMPORARY and revert before distributing. It grants one machine adb access to every
-> device running the build.
+> An image built with `bringup` accepts adb from any host. Never distribute one.
 
 ```sh
 adb wait-for-device logcat -b all > loop.txt

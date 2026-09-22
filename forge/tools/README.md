@@ -15,6 +15,9 @@ container.
 | `find-soong-namespace-drift.sh` | before porting | Soong namespaces the device must now import, modules and HIDL libraries the branch deleted (including what the blobs link against), makefile paths that moved |
 | `triage-build-log.sh` | after a failed build | a wall of errors collapsed into a few classes |
 | `check-image-labels.sh` | when packaging fails | every unlabeled path at once, instead of one per build |
+| `ota-extract.sh` | when you need a reference ROM | partitions out of a signed A/B OTA, and optionally flashed to one slot so you can keep a known-good build on the inactive slot |
+| `slot-switch.sh` | when you need the other slot's ROM to boot | the device moved to the other slot with the shared `/data` wiped and the setup wizard skipped, because the older ROM stops booting once the newer one has initialised user 0 |
+| `blob-attach.sh` | when a prebuilt HAL crashes | a vendor binary under `lldb-server` with its library load base printed, so absolute breakpoints work in a stripped blob |
 | `unpack-block-ota.sh` | when flashing | partition images out of a `payload.bin` OTA, for fastboot-only flashing |
 | `check-sigpipe.sh` | before committing | pipelines that will die silently under `set -o pipefail` |
 | `dev-shell.sh` | any time | an interactive shell in the build container |
@@ -38,6 +41,21 @@ Called for you by `bootstrap.sh`, listed here so you know what they are:
 | `check-hal-readiness.sh` | HALs the manifest declares with nothing to serve them — finds them before a build-flash-boot cycle does |
 | `check-bpf-readiness.sh` | what a kernel without eBPF (or other modern syscalls) will break; `--src` scans code, `--log` reads what the device actually got |
 | `propagate-forge.sh` | pushes an engine change out to every device repo beside this one, fast-forwarding each branch to its remote first |
+| `kernel-rebuild.sh` | boot image only, ~20 min, with the last full build's exact option set (`out/.turbo_config`) so `out/` neither reconfigures nor installcleans; `--am <patch>` puts an overlay kernel patch on the live tree first |
+
+Bringing a kernel up to a newer branch (the *kernel gate* of a port — see
+[docs/porting-a-branch-bump.md](../docs/porting-a-branch-bump.md)), in the order you reach for them:
+
+| tool | run it | what you get |
+|---|---|---|
+| `check-bpf-objects.py` | before the first boot, on the built `.o` files | every BPF map/program/helper the old kernel cannot load, with the kver-gated ones marked skipped |
+| `hybrid-bootimg.sh` | before the first boot | new kernel + old *recovery* ramdisk: recovery/fastbootd on the candidate kernel, so the phone stays reachable |
+| `init-harness.sh` | from that recovery | the new ramdisk's `/init` run as PID 1 of a throwaway pidns on the live kernel; each FATAL in kmsg is a gap, no slot-retry burnt. Covers bionic → `selinux_setup` → start of second stage |
+| `dtbo-ramoops-alt.py` | for anything past that | a debug dtbo whose live ramoops ring survives a clean reboot; normal-boot, then read it from recovery — the only way to see `early-init` die (cgroups, apexd-bootstrap) on a device whose bootloader wipes pstore |
+| `pstore-pull.sh` | from recovery, after | every pstore record, plus the raw ring unrolled if the kernel did not expose it; `pmsg-ramoops-*` decoded to logcat text (`pmsg-decode.py`) |
+| `pixel-ramoops-pull.sh` | Pixel 3/3a class, after a *panic* | the encrypted klog the bootloader saved, decrypted with your own key |
+| `super-loop-mount.sh` | from recovery | a logical partition of the inactive slot mounted rw without device-mapper — edit `init.rc`, push a binary, chroot into it |
+| `usb-watch.sh` | during a boot attempt | timestamped USB/adb/fastboot transitions: how long until the bootloader, whether adbd ever appeared |
 
 ## Assessing a port
 
@@ -127,7 +145,7 @@ actually fails, so they are worth knowing by name.
 | `docker/prefetch.sh` | downloads the build's network inputs into `/dl` in-container, so they overlap `repo sync` instead of running after it. A set-but-failed download is fatal, deliberately |
 | `docker/_build_rom.sh` | runs the build inside the container and calls each enabled option's `require.sh` before and `post-build.sh` after |
 | `prebuilt/lib-fdroid.sh` | the F-Droid fetch: resolves the suggested build of a package, verifies package name, ABI and the pinned signer certificate, unpacks native libraries the APK packs compressed, writes the Soong module file |
-| `prebuilt/fetch-firefox.sh`, `fetch-fulguris.sh`, `fetch-fdroid.sh`, `fetch-k9.sh`, `fetch-kdeconnect.sh`, `fetch-termoneplus.sh`, `fetch-nextcloud.sh`, `fetch-linphone.sh`, `fetch-connectbot.sh` | the per-option fetchers on top of it: package, signer pin, module names |
+| `prebuilt/fetch-firefox.sh`, `fetch-fulguris.sh`, `fetch-fdroid.sh`, `fetch-k9.sh`, `fetch-kdeconnect.sh`, `fetch-termoneplus.sh`, `fetch-nextcloud.sh`, `fetch-linphone.sh`, `fetch-connectbot.sh`, `fetch-syncthing-fork.sh` | the per-option fetchers on top of it: package, signer pin, module names |
 | `prebuilt/lib-app-checks.sh` | the `require.sh` / `post-build.sh` checks those options share: APKs present and named in the module file; shipped byte-identical, libraries installed beside |
 | `prebuilt/fetch-magisk.sh` | downloads Magisk for the `root` option's boot-image patch |
 

@@ -28,6 +28,16 @@ AOSP="${2:-/aosp}"
 _SELF_REPO="$(cd "$(dirname "$0")/../.." && pwd)"; [ -f "$_SELF_REPO/device.conf" ] && source "$_SELF_REPO/device.conf"
 : "${DEVICE:?device.conf missing or DEVICE unset}"
 DEV="$AOSP/device/$DEVICE"
+
+# Prefix for reclaimed ui/ sounds whose filename is already taken by LineageOS. Those names are
+# functional rather than titular -- Effect_Tick is "the click" -- so the stock file is a rival
+# implementation of the same slot, not a duplicate, and it needs a name of its own to sit beside
+# the Lineage one instead of losing to it.
+#
+# Named for the PACK, not the device being built. The sounds are Nextbit's, and any device may
+# select this pack (the Pixel build already borrows the Robin boot animation), so a device-derived
+# prefix would be wrong on every build but one.
+OEM_SOUND_PREFIX="${OEM_SOUND_PREFIX:-nextbit-}"
 # Everything this script stages goes under vendor/extra, not the device tree, so the oem option is
 # the same on every device and needs no device patch to install it. DEV is still used for the
 # "is this device synced" sanity check and nothing else.
@@ -86,18 +96,100 @@ if [ -d "$TMP/system/media/audio" ]; then
   sort -u "$ref_sha" -o "$ref_sha"; sort -u "$ref_name" -o "$ref_name"
 
   rm -rf "$OEM/sounds/media/audio"; mkdir -p "$OEM/sounds/media/audio"
-  kept=0; skipped=0
+  kept=0; skipped=0; renamed=0; ns_names=""
   while IFS= read -r -d '' f; do
     rel="${f#"$TMP"/system/media/audio/}"
-    if grep -qxF "$(sha256sum "$f" | awk '{print $1}')" "$ref_sha" \
-       || grep -qxF "$(basename "$f")" "$ref_name"; then
-      skipped=$((skipped+1)); continue          # already in Lineage -> would be a duplicate
+    # Content match means a real duplicate wherever it lives. A name match only means duplicate
+    # for ringtones/notifications/alarms, where the filename is the tune's title and the same
+    # title re-encoded is still the same tune. Under ui/ the name is a FUNCTION -- Effect_Tick is
+    # "the click", ChargingStarted is "the charging sound" -- so a stock file sharing the name is
+    # the manufacturer's own version of that sound, which is the whole point of this option.
+    # Dropping those by name cost the Robin its entire UI set: click, keypresses, lock/unlock,
+    # camera shutter and charging, 15 files, while its uniquely named ones came through.
+    if grep -qxF "$(sha256sum "$f" | awk '{print $1}')" "$ref_sha"; then
+      skipped=$((skipped+1)); continue          # identical content -> a real duplicate
     fi
+    case "$rel" in
+      ui/*)
+        # Keep it, but namespace it if the name is taken. Installing a second Effect_Tick.ogg
+        # would not work anyway: the framework resolves ui sounds under /product before /system,
+        # Lineage fills /product, and the build keeps the first destination it sees for any
+        # duplicate. A name of our own sidesteps both, leaves the Lineage sound installed and
+        # selectable, and gives the overlay that selects ours something to point at.
+        if grep -qxF "$(basename "$f")" "$ref_name"; then
+          ns_names="$ns_names $(basename "$f")"
+          rel="$(dirname "$rel")/$OEM_SOUND_PREFIX$(basename "$f")"
+          renamed=$((renamed+1))
+        fi
+        ;;
+      *) if grep -qxF "$(basename "$f")" "$ref_name"; then
+           skipped=$((skipped+1)); continue     # same title -> the same tune re-encoded
+         fi ;;
+    esac
     mkdir -p "$OEM/sounds/media/audio/$(dirname "$rel")"
     cp -a "$f" "$OEM/sounds/media/audio/$rel"; kept=$((kept+1))
   done < <(find "$TMP/system/media/audio" -name '*.ogg' -print0)
-  echo "   sounds: kept $kept Robin-unique, skipped $skipped already-in-Lineage (of $((kept+skipped)))"
+  echo "   sounds: kept $kept ($renamed of them namespaced $OEM_SOUND_PREFIX*), skipped $skipped already-in-Lineage (of $((kept+skipped)))"
   [ "$kept" -gt 0 ] || echo "   !! kept 0 sounds — check the Lineage reference dirs exist under $AOSP"
+
+  # Point the sound-effect table at the namespaced files. SoundEffectsHelper reads this table from
+  # com.android.internal.R.xml.audio_assets, so a device overlay is what selects a different file;
+  # copying the .ogg in is not enough on its own.
+  #
+  # The overlay REPLACES the stock resource, so it is derived from the stock file rather than
+  # written from a template: every asset id the branch declares is preserved and only the file=
+  # names we actually reclaimed are rewritten. A hand-written table would silently drop whatever
+  # ids a future branch adds.
+  _aa_src="$AOSP/frameworks/base/core/res/res/xml/audio_assets.xml"
+  if [ -n "${ns_names// /}" ] && [ -f "$_aa_src" ]; then
+    _aa_out="$OEM_OVL/frameworks/base/core/res/res/xml/audio_assets.xml"
+    mkdir -p "$(dirname "$_aa_out")"; cp -f "$_aa_src" "$_aa_out"
+    _aa_n=0
+    for _n in $ns_names; do
+      grep -q "file=\"$_n\"" "$_aa_out" || continue   # this branch's table does not use it
+      sed -i "s|file=\"$_n\"|file=\"$OEM_SOUND_PREFIX$_n\"|g" "$_aa_out"
+      _aa_n=$((_aa_n+1))
+    done
+    if [ "$_aa_n" -gt 0 ]; then
+      echo "   sound effects: $_aa_n file(s) repointed to $OEM_SOUND_PREFIX* in the audio_assets overlay"
+    else
+      rm -f "$_aa_out"   # nothing we reclaimed is in the table; do not replace it for no reason
+    fi
+  fi
+
+  # Lock, Unlock, Dock, Undock and the charging sound are not sound effects: SettingsProvider seeds
+  # them into Settings.Global from string defaults holding an ABSOLUTE path, so they are repointed
+  # by overriding those strings rather than by name lookup, and can point straight at /system.
+  #
+  # Which resource names to touch is read out of the stock file rather than hardcoded -- one
+  # filename can back several settings (Dock.ogg is both the desk and the car dock sound), and a
+  # branch may add more. Unlike the audio_assets file resource, a values/ overlay merges per
+  # resource name, so only the overridden strings belong here.
+  _sp_src="$AOSP/frameworks/base/packages/SettingsProvider/res/values/defaults.xml"
+  if [ -n "${ns_names// /}" ] && [ -f "$_sp_src" ]; then
+    _sp_out="$OEM_OVL/frameworks/base/packages/SettingsProvider/res/values/defaults.xml"
+    _sp_body=""; _sp_n=0
+    for _n in $ns_names; do
+      while IFS= read -r _l; do
+        [ -n "$_l" ] || continue
+        _sp_body="$_sp_body
+$(printf '%s' "$_l" | sed "s|>[^<]*/$_n<|>/system/media/audio/ui/$OEM_SOUND_PREFIX$_n<|")"
+        _sp_n=$((_sp_n+1))
+      done < <(grep -E "<string name=\"[^\"]+\"[^>]*>[^<]*/$_n</string>" "$_sp_src" || true)
+    done
+    if [ "$_sp_n" -gt 0 ]; then
+      mkdir -p "$(dirname "$_sp_out")"
+      { echo '<?xml version="1.0" encoding="utf-8"?>'
+        echo "<!-- Generated by $(basename "$0"): the manufacturer's own versions of these sounds,"
+        echo "     reclaimed from its stock ROM and installed under /system with a $OEM_SOUND_PREFIX prefix"
+        echo "     so they sit beside the LineageOS ones rather than replacing them. -->"
+        echo '<resources>'
+        printf '%s\n' "$_sp_body"
+        echo '</resources>'
+      } > "$_sp_out"
+      echo "   sound settings: $_sp_n default(s) repointed to $OEM_SOUND_PREFIX* in the SettingsProvider overlay"
+    fi
+  fi
 else
   echo "   !! no system/media/audio in the zip"
 fi
