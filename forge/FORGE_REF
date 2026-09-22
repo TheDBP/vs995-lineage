@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=4d3e81cfc9cb278295415132fda2b7738e708b26
-subject=extract-gapps-apps: a GApps core with no stock apps is not a failure
-synced=2026-09-22T23:01:29Z
+commit=66437cde8a0764976aa8c97938739b8e9fc819c5
+subject=Revert "extract-gapps-apps: a GApps core with no stock apps is not a failure"
+synced=2026-09-22T23:20:34Z
