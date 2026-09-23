@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=60979351467cc9d794bb344d22ccc5071bebdd9e
-subject=repack-erofs-apex: sign with signapk --align-file-size, and assert the alignment
-synced=2026-09-23T09:35:43Z
+commit=a8e93d0cf55dddfc190c9672185e98a0bd6c6ee6
+subject=fulguris: say why it belongs in no preset
+synced=2026-09-23T13:55:31Z
