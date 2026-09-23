@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=a8e93d0cf55dddfc190c9672185e98a0bd6c6ee6
-subject=fulguris: say why it belongs in no preset
-synced=2026-09-23T13:55:31Z
+commit=212174581147ef41f9a528844098d8b8a072f1a3
+subject=options: REQUIRES, and root brings a terminal
+synced=2026-09-23T17:11:50Z
