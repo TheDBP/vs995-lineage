@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=059ed139ebbce91f7e0888c30d1c5a0c13f625c2
-subject=teal-skin: no '--' inside the XML comment
-synced=2026-09-23T00:08:52Z
+commit=d15f731997b29f9d88866135f5471d7fef669d0d
+subject=gapps: repack the EROFS apex payload as ext4 for kernels without EROFS
+synced=2026-09-23T02:39:33Z
