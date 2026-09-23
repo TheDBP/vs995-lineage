@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=d15f731997b29f9d88866135f5471d7fef669d0d
-subject=gapps: repack the EROFS apex payload as ext4 for kernels without EROFS
-synced=2026-09-23T02:39:33Z
+commit=60979351467cc9d794bb344d22ccc5071bebdd9e
+subject=repack-erofs-apex: sign with signapk --align-file-size, and assert the alignment
+synced=2026-09-23T09:35:43Z
