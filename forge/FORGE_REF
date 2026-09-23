@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=03def3445d0c88f4a03c65ca82c9c7c8bdcdecc4
-subject=apply-overlay: match already-applied against our commits, not upstream history
-synced=2026-09-22T23:25:29Z
+commit=059ed139ebbce91f7e0888c30d1c5a0c13f625c2
+subject=teal-skin: no '--' inside the XML comment
+synced=2026-09-23T00:08:52Z
