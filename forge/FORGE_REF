@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=1f2df8724ae40cba99c8109cce6ac485d83bbc95
-subject=refresh-patches: patches live in two places, and the scan must know about both
-synced=2026-09-24T18:27:14Z
+commit=645e0a387774bf11290aa5eabb2cf31ba8b2b450
+subject=options: setup-mobile-data, and index abi-gap.sh and debugging-volte.md
+synced=2026-09-24T18:30:26Z
