@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=051466405da92a396af6e1021f9f92f2f6cde988
-subject=device.conf.example: presets that match what the options actually are
-synced=2026-09-24T18:42:01Z
+commit=a0c86766a593210d71d29211e945c158a451233d
+subject=tools: publish-kernel-source.sh -- answer a GPL request with one link
+synced=2026-09-24T19:51:33Z
