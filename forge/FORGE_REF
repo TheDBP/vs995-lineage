@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=645e0a387774bf11290aa5eabb2cf31ba8b2b450
-subject=options: setup-mobile-data, and index abi-gap.sh and debugging-volte.md
-synced=2026-09-24T18:30:26Z
+commit=051466405da92a396af6e1021f9f92f2f6cde988
+subject=device.conf.example: presets that match what the options actually are
+synced=2026-09-24T18:42:01Z
