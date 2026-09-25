@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=887ecf56ffbee6cc245cb77d4b8ea407a9078846
-subject=pong-notification: patch the value, do not re-declare the property
-synced=2026-09-25T12:06:09Z
+commit=bb416b381ca5bf26ef09f42589faff86763ff51a
+subject=prebuilt: only emit skip_preprocessed_apk_checks where Soong parses it
+synced=2026-09-25T20:04:55Z
