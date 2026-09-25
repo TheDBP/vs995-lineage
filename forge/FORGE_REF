@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=7c6dc91ee2820de572a36ec1425374b7ea9b9cc5
-subject=tools: read the EFS items a Qualcomm MCFG provisions
-synced=2026-09-25T11:20:02Z
+commit=887ecf56ffbee6cc245cb77d4b8ea407a9078846
+subject=pong-notification: patch the value, do not re-declare the property
+synced=2026-09-25T12:06:09Z
