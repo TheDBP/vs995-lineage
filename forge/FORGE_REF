@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=c87f37e9eea60e30e4f1fdcd147bedceda2cb451
-subject=options: pong-notification -- Pong as the default notification sound
-synced=2026-09-25T00:39:52Z
+commit=7c6dc91ee2820de572a36ec1425374b7ea9b9cc5
+subject=tools: read the EFS items a Qualcomm MCFG provisions
+synced=2026-09-25T11:20:02Z
