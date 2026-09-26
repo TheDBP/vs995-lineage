@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=74873ea4d3b26a942dc6ce18d34f606212c3ff9b
-subject=bootstrap: derive a tag for ad-hoc OPTIONS builds too
-synced=2026-09-26T18:07:55Z
+commit=b6b81a6c6ea52db9c5646562d74ee75c59dfdd56
+subject=setupwizard-lineage: override the module names MindTheGapps actually uses on 20.0
+synced=2026-09-26T18:32:07Z
