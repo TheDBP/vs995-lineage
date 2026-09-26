@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=bb416b381ca5bf26ef09f42589faff86763ff51a
-subject=prebuilt: only emit skip_preprocessed_apk_checks where Soong parses it
-synced=2026-09-25T20:04:55Z
+commit=3f4c77e6d7aa8e8c6c78663d81247ba49ed0318a
+subject=presets: let a device name the options stock cannot do without
+synced=2026-09-26T17:34:00Z
