@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=b6b81a6c6ea52db9c5646562d74ee75c59dfdd56
-subject=setupwizard-lineage: override the module names MindTheGapps actually uses on 20.0
-synced=2026-09-26T18:32:07Z
+commit=51a4da62056d42069fe3622d6ff4c23bbc99771c
+subject=check-patch-series: document how to collapse a pair, and what silently goes wrong
+synced=2026-09-27T21:45:03Z
