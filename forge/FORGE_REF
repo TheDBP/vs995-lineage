@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=51a4da62056d42069fe3622d6ff4c23bbc99771c
-subject=check-patch-series: document how to collapse a pair, and what silently goes wrong
-synced=2026-09-27T21:45:03Z
+commit=88f109a08d4872a630e78356ee861e3f5ad1e161
+subject=check-patch-series: a pair needs the same file, not just the same line
+synced=2026-09-27T21:55:53Z
