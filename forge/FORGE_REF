@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=faea735c78cd61ba6121ca79ca7e2fe722614053
-subject=options: let a diagnostic kernel patch be skipped, and stop nextcloud-core breaking nextcloud
-synced=2026-09-29T16:26:20Z
+commit=e73e72f74384160b1e06974fe3fd423aecf92cee
+subject=check-patch-series: reordering two patches that append to one file changes that file
+synced=2026-09-29T17:00:13Z
