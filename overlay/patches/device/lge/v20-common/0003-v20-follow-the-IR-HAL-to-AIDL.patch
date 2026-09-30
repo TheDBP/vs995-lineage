@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 17:21:41 -0400
+Subject: [PATCH] v20: follow the IR HAL to AIDL
+
+The service ships its own VINTF fragment now, so the HIDL entry here would
+fail the manifest check.
+
+---
+ manifest.xml | 9 ---------
+ v20.mk       | 2 +-
+ 2 files changed, 1 insertion(+), 10 deletions(-)
+
+diff --git a/manifest.xml b/manifest.xml
+index 45c9618..d4fa59f 100644
+--- a/manifest.xml
++++ b/manifest.xml
+@@ -1,11 +1,2 @@
+ <manifest version="1.0" type="device" target-level="5">
+-    <hal format="hidl">
+-        <name>android.hardware.ir</name>
+-        <transport>hwbinder</transport>
+-        <version>1.0</version>
+-        <interface>
+-            <name>IConsumerIr</name>
+-            <instance>default</instance>
+-        </interface>
+-    </hal>
+ </manifest>
+diff --git a/v20.mk b/v20.mk
+index 97025d9..d9a10af 100644
+--- a/v20.mk
++++ b/v20.mk
+@@ -74,7 +74,7 @@ PRODUCT_VENDOR_PROPERTIES += \
+ 
+ # IR
+ PRODUCT_PACKAGES += \
+-    android.hardware.ir@1.0-service.lge
++    android.hardware.ir-service.lge
+ 
+ # Lights
+ PRODUCT_PACKAGES += \

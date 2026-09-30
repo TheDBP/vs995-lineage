@@ -18,13 +18,12 @@ two namespaces at once.
 Removing the prebuilt rather than the platform module: the platform builds it from source against the
 headers it also ships (libwifi-hal-ctrl_headers), and a 2017 vendor .so is the copy to lose when the two
 disagree.
-
 ---
  Android.bp | 21 ---------------------
  1 file changed, 21 deletions(-)
 
 diff --git a/Android.bp b/Android.bp
-index ea9c8ea..7db749e 100644
+index a63254a..8cce851 100644
 --- a/Android.bp
 +++ b/Android.bp
 @@ -1758,27 +1758,6 @@ cc_prebuilt_library_shared {

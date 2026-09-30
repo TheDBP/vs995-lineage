@@ -1,4 +1,4 @@
-From cd31b7a933aae084542059f48d1cbd21a952e0a7 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: T <t@e.c>
 Date: Sat, 12 Sep 2026 14:08:49 -0400
 Subject: [PATCH] vs995: interactive governor and HMP retune for the msm8996
@@ -18,7 +18,7 @@ wanted; they were a step in my own process, replayed on every build.
  1 file changed, 9 insertions(+), 9 deletions(-)
 
 diff --git a/rootdir/bin/init.power.sh b/rootdir/bin/init.power.sh
-index d8065ab..d566b4d 100644
+index d8065ab0..d566b4df 100644
 --- a/rootdir/bin/init.power.sh
 +++ b/rootdir/bin/init.power.sh
 @@ -32,11 +32,11 @@ write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive

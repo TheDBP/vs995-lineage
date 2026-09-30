@@ -1,0 +1,315 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 17:17:55 -0400
+Subject: [PATCH] v20: use the generic Lineage AIDL lights HAL
+
+android.hardware.light@2.0 was removed from hardware/interfaces, so the
+device's HIDL service cannot build. It drove only lcd-backlight and
+lcd-backlight-ex, both of which android.hardware.light-service.lineage
+already probes in its kLedBacklightDevices list, so the generic AIDL
+service is a direct replacement and the device implementation goes away.
+
+Known delta: the old service applied a cube-root gamma curve to the
+backlight value. The generic one scales linearly against max_brightness,
+so low brightness settings land dimmer than before.
+
+---
+ light/Android.bp                              |  30 ------
+ light/Light.cpp                               | 100 ------------------
+ light/Light.h                                 |  56 ----------
+ ...android.hardware.light@2.0-service.elsa.rc |   7 --
+ light/service.cpp                             |  50 ---------
+ v20.mk                                        |   2 +-
+ 6 files changed, 1 insertion(+), 244 deletions(-)
+ delete mode 100644 light/Android.bp
+ delete mode 100644 light/Light.cpp
+ delete mode 100644 light/Light.h
+ delete mode 100644 light/android.hardware.light@2.0-service.elsa.rc
+ delete mode 100644 light/service.cpp
+
+diff --git a/light/Android.bp b/light/Android.bp
+deleted file mode 100644
+index 5f125e4..0000000
+--- a/light/Android.bp
++++ /dev/null
+@@ -1,30 +0,0 @@
+-//
+-// Copyright (C) 2017 The LineageOS Project
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//      http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+-
+-cc_binary {
+-    relative_install_path: "hw",
+-    defaults: ["hidl_defaults"],
+-    name: "android.hardware.light@2.0-service.elsa",
+-    proprietary: true,
+-    init_rc: ["android.hardware.light@2.0-service.elsa.rc"],
+-    srcs: ["service.cpp", "Light.cpp"],
+-    shared_libs: [
+-        "libhardware",
+-        "libhidlbase",
+-        "liblog",
+-        "libutils",
+-        "android.hardware.light@2.0",
+-    ],
+-}
+diff --git a/light/Light.cpp b/light/Light.cpp
+deleted file mode 100644
+index 4184c02..0000000
+--- a/light/Light.cpp
++++ /dev/null
+@@ -1,100 +0,0 @@
+-/*
+- * Copyright (C) 2017 The LineageOS Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-#define LOG_TAG "LightService"
+-
+-#include <log/log.h>
+-
+-#include "Light.h"
+-
+-#include <cmath>
+-#include <fstream>
+-
+-#define LCD_BRIGHTNESS_MIN 1 // Matches config_screenBrightnessSettingMinimum
+-#define LCD_BRIGHTNESS_MAX 255
+-#define LCD_BRIGHTNESS_DELTA (LCD_BRIGHTNESS_MAX - LCD_BRIGHTNESS_MIN)
+-
+-namespace android {
+-namespace hardware {
+-namespace light {
+-namespace V2_0 {
+-namespace implementation {
+-
+-/*
+- * Write value to path and close file.
+- */
+-static void set(std::string path, std::string value) {
+-    std::ofstream file(path);
+-    file << value;
+-}
+-
+-static void set(std::string path, int value) {
+-    set(path, std::to_string(value));
+-}
+-
+-static uint32_t applyGamma(const uint32_t brightness){
+-    if(brightness < LCD_BRIGHTNESS_MIN)
+-        return 0;
+-
+-    return LCD_BRIGHTNESS_MIN + LCD_BRIGHTNESS_DELTA *
+-        cbrt(((double)brightness - LCD_BRIGHTNESS_MIN)/LCD_BRIGHTNESS_DELTA);
+-}
+-
+-static void handleBacklight(const LightState& state) {
+-    uint32_t brightness = state.color & 0xFF;
+-    brightness = applyGamma(brightness);
+-    set("/sys/class/leds/lcd-backlight/brightness", brightness);
+-    set("/sys/class/leds/lcd-backlight-ex/brightness", brightness);
+-}
+-
+-static std::map<Type, std::function<void(const LightState&)>> lights = {
+-    {Type::BACKLIGHT, handleBacklight},
+-};
+-
+-Light::Light() {}
+-
+-Return<Status> Light::setLight(Type type, const LightState& state) {
+-    auto it = lights.find(type);
+-
+-    if (it == lights.end()) {
+-        return Status::LIGHT_NOT_SUPPORTED;
+-    }
+-
+-    /*
+-     * Lock global mutex until light state is updated.
+-     */
+-    std::lock_guard<std::mutex> lock(globalLock);
+-
+-    it->second(state);
+-
+-    return Status::SUCCESS;
+-}
+-
+-Return<void> Light::getSupportedTypes(getSupportedTypes_cb _hidl_cb) {
+-    std::vector<Type> types;
+-
+-    for (auto const& light : lights) types.push_back(light.first);
+-
+-    _hidl_cb(types);
+-
+-    return Void();
+-}
+-
+-}  // namespace implementation
+-}  // namespace V2_0
+-}  // namespace light
+-}  // namespace hardware
+-}  // namespace android
+diff --git a/light/Light.h b/light/Light.h
+deleted file mode 100644
+index 7c80f6f..0000000
+--- a/light/Light.h
++++ /dev/null
+@@ -1,56 +0,0 @@
+-/*
+- * Copyright (C) 2017 The LineageOS Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-#ifndef ANDROID_HARDWARE_LIGHT_V2_0_LIGHT_H
+-#define ANDROID_HARDWARE_LIGHT_V2_0_LIGHT_H
+-
+-#include <android/hardware/light/2.0/ILight.h>
+-#include <hardware/lights.h>
+-#include <hidl/Status.h>
+-#include <map>
+-#include <mutex>
+-
+-namespace android {
+-namespace hardware {
+-namespace light {
+-namespace V2_0 {
+-namespace implementation {
+-
+-using ::android::hardware::Return;
+-using ::android::hardware::Void;
+-using ::android::hardware::hidl_vec;
+-using ::android::hardware::light::V2_0::ILight;
+-using ::android::hardware::light::V2_0::LightState;
+-using ::android::hardware::light::V2_0::Status;
+-using ::android::hardware::light::V2_0::Type;
+-
+-class Light : public ILight {
+-   public:
+-    Light();
+-
+-    Return<Status> setLight(Type type, const LightState& state) override;
+-    Return<void> getSupportedTypes(getSupportedTypes_cb _hidl_cb) override;
+-
+-   private:
+-    std::mutex globalLock;
+-};
+-
+-}  // namespace implementation
+-}  // namespace V2_0
+-}  // namespace light
+-}  // namespace hardware
+-}  // namespace android
+-
+-#endif  // ANDROID_HARDWARE_LIGHT_V2_0_LIGHT_H
+diff --git a/light/android.hardware.light@2.0-service.elsa.rc b/light/android.hardware.light@2.0-service.elsa.rc
+deleted file mode 100644
+index 992b75b..0000000
+--- a/light/android.hardware.light@2.0-service.elsa.rc
++++ /dev/null
+@@ -1,7 +0,0 @@
+-service vendor.light-hal-2-0 /vendor/bin/hw/android.hardware.light@2.0-service.elsa
+-    interface android.hardware.light@2.0::ILight default
+-    class hal
+-    user system
+-    group system
+-    # shutting off lights while powering-off
+-    shutdown critical
+diff --git a/light/service.cpp b/light/service.cpp
+deleted file mode 100644
+index 9b20bb6..0000000
+--- a/light/service.cpp
++++ /dev/null
+@@ -1,50 +0,0 @@
+-/*
+- * Copyright 2017 The LineageOS Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-#define LOG_TAG "android.hardware.light@2.0-service.lucye"
+-
+-#include <hidl/HidlTransportSupport.h>
+-
+-#include "Light.h"
+-
+-using android::hardware::configureRpcThreadpool;
+-using android::hardware::joinRpcThreadpool;
+-
+-using android::hardware::light::V2_0::ILight;
+-using android::hardware::light::V2_0::implementation::Light;
+-
+-using android::OK;
+-using android::sp;
+-using android::status_t;
+-
+-int main() {
+-    android::sp<ILight> service = new Light();
+-
+-    configureRpcThreadpool(1, true);
+-
+-    status_t status = service->registerAsService();
+-    if (status != OK) {
+-        ALOGE("Cannot register Light HAL service.");
+-        return 1;
+-    }
+-
+-    ALOGI("Light HAL service ready.");
+-
+-    joinRpcThreadpool();
+-
+-    ALOGI("Light HAL service failed to join thread pool.");
+-    return 1;
+-}
+diff --git a/v20.mk b/v20.mk
+index 51644e4..8ce32c0 100644
+--- a/v20.mk
++++ b/v20.mk
+@@ -73,7 +73,7 @@ PRODUCT_PACKAGES += \
+ 
+ # Lights
+ PRODUCT_PACKAGES += \
+-    android.hardware.light@2.0-service.elsa
++    android.hardware.light-service.lineage
+ 
+ # Media
+ PRODUCT_COPY_FILES += \

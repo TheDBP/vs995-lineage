@@ -1,0 +1,465 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 17:21:31 -0400
+Subject: [PATCH] msm8996-common: port the IR HAL to AIDL
+
+android.hardware.ir@1.0 was removed from hardware/interfaces, and the make
+module also still asked for libhidltransport, which went years ago.
+
+The generic android.hardware.ir-service.lineage is not a substitute here:
+it drives /dev/lirc0 with LIRC ioctls, whereas this blaster is a UART at
+/dev/ttyMSM1 and the pulse framing lives in libcir_driver. So the device
+implementation stays and moves to AIDL, keeping transmitIr(), the 115200
+baud rate and the 25-125 kHz carrier range exactly as they were.
+
+Converting to Soong means the namespace has to import the blob tree's
+namespace, which is where libcir_driver is declared; under make the
+dependency resolved globally. TARGET_USE_LGE_IR guarded the make module
+and had no other reader, so it goes with it -- every device sharing this
+tree set it to true.
+
+---
+ Android.bp                                |  4 +
+ BoardConfigCommon.mk                      |  5 +-
+ ir/Android.bp                             | 22 +++++
+ ir/Android.mk                             | 47 -----------
+ ir/ConsumerIr.cpp                         | 97 ++++++++++++-----------
+ ir/ConsumerIr.h                           | 53 +++++--------
+ ir/android.hardware.ir-service.lge.rc     | 10 +++
+ ir/android.hardware.ir-service.lge.xml    | 11 +++
+ ir/android.hardware.ir@1.0-service.lge.rc |  4 -
+ ir/service.cpp                            | 51 +++---------
+ 10 files changed, 131 insertions(+), 173 deletions(-)
+ create mode 100644 ir/Android.bp
+ delete mode 100644 ir/Android.mk
+ create mode 100644 ir/android.hardware.ir-service.lge.rc
+ create mode 100644 ir/android.hardware.ir-service.lge.xml
+ delete mode 100644 ir/android.hardware.ir@1.0-service.lge.rc
+
+diff --git a/Android.bp b/Android.bp
+index 9515b257..3bde5345 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -1,2 +1,6 @@
+ soong_namespace {
++    imports: [
++        // the IR HAL links libcir_driver, which lives in the blob tree's own namespace
++        "vendor/lge/msm8996-common",
++    ],
+ }
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index 66738ea2..b5f2fcde 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -112,8 +112,6 @@ DEVICE_MANIFEST_FILE := $(COMMON_PATH)/manifest.xml
+ DEVICE_MATRIX_FILE := $(COMMON_PATH)/compatibility_matrix.xml
+ TARGET_FS_CONFIG_GEN += $(COMMON_PATH)/config.fs
+ 
+-# IR
+-TARGET_USE_LGE_IR := true
+ 
+ # Kernel
+ BOARD_KERNEL_BASE := 0x80000000
+@@ -175,3 +173,6 @@ WIFI_DRIVER_FW_PATH_PARAM := "/sys/module/bcmdhd/parameters/firmware_path"
+ WIFI_DRIVER_FW_PATH_STA := "/vendor/firmware/fw_bcmdhd.bin"
+ WIFI_HIDL_UNIFIED_SUPPLICANT_SERVICE_RC_ENTRY := true
+ WPA_SUPPLICANT_VERSION := VER_0_8_X
++
++# added by rom-forge (KERNEL_EXTRA_CONFIGS=container) -- merged over the base defconfig
++TARGET_KERNEL_CONFIG += forge_container.config
+diff --git a/ir/Android.bp b/ir/Android.bp
+new file mode 100644
+index 00000000..8554324c
+--- /dev/null
++++ b/ir/Android.bp
+@@ -0,0 +1,22 @@
++//
++// SPDX-FileCopyrightText: 2018 The LineageOS Project
++// SPDX-License-Identifier: Apache-2.0
++//
++
++cc_binary {
++    name: "android.hardware.ir-service.lge",
++    relative_install_path: "hw",
++    vendor: true,
++    init_rc: ["android.hardware.ir-service.lge.rc"],
++    vintf_fragments: ["android.hardware.ir-service.lge.xml"],
++    srcs: [
++        "ConsumerIr.cpp",
++        "service.cpp",
++    ],
++    shared_libs: [
++        "libbase",
++        "libbinder_ndk",
++        "android.hardware.ir-V1-ndk",
++        "libcir_driver",
++    ],
++}
+diff --git a/ir/Android.mk b/ir/Android.mk
+deleted file mode 100644
+index 1b70ed15..00000000
+--- a/ir/Android.mk
++++ /dev/null
+@@ -1,47 +0,0 @@
+-# Copyright (C) 2013 The Android Open Source Project
+-# Copyright (C) 2018 The LineageOS Project
+-#
+-# Licensed under the Apache License, Version 2.0 (the "License");
+-# you may not use this file except in compliance with the License.
+-# You may obtain a copy of the License at
+-#
+-#      http://www.apache.org/licenses/LICENSE-2.0
+-#
+-# Unless required by applicable law or agreed to in writing, software
+-# distributed under the License is distributed on an "AS IS" BASIS,
+-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-# See the License for the specific language governing permissions and
+-# limitations under the License.
+-
+-LOCAL_PATH := $(call my-dir)
+-
+-include $(CLEAR_VARS)
+-
+-ifeq ($(TARGET_USE_LGE_IR),true)
+-
+-LOCAL_MODULE := android.hardware.ir@1.0-service.lge
+-LOCAL_INIT_RC := android.hardware.ir@1.0-service.lge.rc
+-LOCAL_MODULE_RELATIVE_PATH := hw
+-LOCAL_SHARED_LIBRARIES := \
+-    liblog \
+-    libcutils \
+-    libdl \
+-    libxml2 \
+-    libhidlbase \
+-    libhidltransport \
+-    libhardware \
+-    libutils \
+-    android.hardware.ir@1.0 \
+-    libcir_driver
+-
+-LOCAL_SRC_FILES := \
+-    service.cpp \
+-    ConsumerIr.cpp
+-
+-LOCAL_MODULE_TAGS := optional
+-LOCAL_VENDOR_MODULE := true
+-LOCAL_PRIVATE_PLATFORM_APIS := true
+-
+-include $(BUILD_EXECUTABLE)
+-
+-endif
+diff --git a/ir/ConsumerIr.cpp b/ir/ConsumerIr.cpp
+index d46eaeed..99b43e9b 100644
+--- a/ir/ConsumerIr.cpp
++++ b/ir/ConsumerIr.cpp
+@@ -1,47 +1,31 @@
+ /*
+- * Copyright (C) 2013 The Android Open Source Project
+- * Copyright (C) 2017-2018 The LineageOS Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
++ * SPDX-FileCopyrightText: 2013 The Android Open Source Project
++ * SPDX-FileCopyrightText: 2017-2018 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
+  */
+-#define LOG_TAG "ConsumerIrService"
+ 
+-#include <fcntl.h>
+-#include <linux/lirc.h>
++#include "ConsumerIr.h"
+ 
+-#include <log/log.h>
++#define LOG_TAG "ConsumerIrLge"
+ 
+-#include "ConsumerIr.h"
++#include <android-base/logging.h>
+ 
++// The blaster hangs off a UART rather than a LIRC device, and the pulse framing
++// lives in the blob, so this HAL hands the pattern over whole instead of doing
++// its own ioctl/write sequence.
++extern "C" int transmitIr(const char* dev, int baudRate, int frequency, int pattern[],
++                          int pattern_len);
++
++namespace aidl {
+ namespace android {
+ namespace hardware {
+ namespace ir {
+-namespace V1_0 {
+-namespace implementation {
+-
+-// LG specific defines
+-#define IR_DEVICE "/dev/ttyMSM1"
+-#define LG_IR_BAUD_RATE 115200
+ 
+-extern "C" {
+-extern int transmitIr(const char *dev, int baudRate, int frequency, int pattern[], int pattern_len);
+-}
+-
+-static hidl_vec<ConsumerIrFreqRange> rangeVec{
+-    {.min = 25000, .max = 125000},
+-};
++static constexpr char kIrDevice[] = "/dev/ttyMSM1";
++static constexpr int kBaudRate = 115200;
+ 
+-enum LG_TRANSMIT_IR_RETURN_CODES {
++// transmitIr() return codes, in order, from libcir_driver.
++enum LgTransmitIrReturnCodes {
+     IR_SUCCESS,
+     IR_FAIL,
+     IR_INVALID_PORT,
+@@ -54,29 +38,48 @@ enum LG_TRANSMIT_IR_RETURN_CODES {
+     IR_MAX_DURATIONS_EXCEEDED
+ };
+ 
+-ConsumerIr::ConsumerIr() {}
++ConsumerIr::ConsumerIr() : kRangeVec({{.minHz = 25000, .maxHz = 125000}}) {}
++
++::ndk::ScopedAStatus ConsumerIr::getCarrierFreqs(std::vector<ConsumerIrFreqRange>* _aidl_return) {
++    *_aidl_return = kRangeVec;
+ 
+-Return<bool> ConsumerIr::transmit(int32_t carrierFreq, const hidl_vec<int32_t>& pattern) {
++    return ::ndk::ScopedAStatus::ok();
++}
++
++::ndk::ScopedAStatus ConsumerIr::transmit(int32_t carrierFreqHz,
++                                          const std::vector<int32_t>& pattern) {
+     size_t entries = pattern.size();
+-    int rc;
+ 
+-    // call into libcir_driver
+-    ALOGD("transmitting pattern at %d Hz", carrierFreq);
+-    rc = transmitIr(IR_DEVICE, LG_IR_BAUD_RATE, carrierFreq, const_cast<int32_t*>(pattern.data()), sizeof(int32_t) * entries);
++    if (entries == 0) {
++        return ::ndk::ScopedAStatus::ok();
++    }
++
++    if (!isInRange(carrierFreqHz)) {
++        LOG(ERROR) << "Unsupported carrier " << carrierFreqHz;
++        return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
++    }
++
++    // pattern_len is a byte count, not an entry count.
++    int rc = transmitIr(kIrDevice, kBaudRate, carrierFreqHz,
++                        const_cast<int32_t*>(pattern.data()), sizeof(int32_t) * entries);
+     if (rc != IR_SUCCESS) {
+-        ALOGE("transmitIr() failed, error %d\n", rc);
+-        return false;
++        LOG(ERROR) << "transmitIr() failed, error " << rc;
++        return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
+     }
+-    return true;
++
++    return ::ndk::ScopedAStatus::ok();
+ }
+ 
+-Return<void> ConsumerIr::getCarrierFreqs(getCarrierFreqs_cb _hidl_cb) {
+-    _hidl_cb(true, rangeVec);
+-    return Void();
++bool ConsumerIr::isInRange(int32_t carrierFreqHz) {
++    for (const auto& range : kRangeVec) {
++        if (carrierFreqHz >= range.minHz && carrierFreqHz <= range.maxHz) {
++            return true;
++        }
++    }
++    return false;
+ }
+ 
+-}  // namespace implementation
+-}  // namespace V1_0
+ }  // namespace ir
+ }  // namespace hardware
+ }  // namespace android
++}  // namespace aidl
+diff --git a/ir/ConsumerIr.h b/ir/ConsumerIr.h
+index d027d6c7..4f045cf7 100644
+--- a/ir/ConsumerIr.h
++++ b/ir/ConsumerIr.h
+@@ -1,50 +1,33 @@
+ /*
+- * Copyright (C) 2018 The LineageOS Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
++ * SPDX-FileCopyrightText: 2013 The Android Open Source Project
++ * SPDX-FileCopyrightText: 2017-2018 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
+  */
+ 
+-#ifndef ANDROID_HARDWARE_IR_V1_0_IR_H
+-#define ANDROID_HARDWARE_IR_V1_0_IR_H
++#pragma once
+ 
+-#include <android/hardware/ir/1.0/IConsumerIr.h>
+-#include <hardware/consumerir.h>
+-#include <hidl/Status.h>
++#include <aidl/android/hardware/ir/BnConsumerIr.h>
+ 
++namespace aidl {
+ namespace android {
+ namespace hardware {
+ namespace ir {
+-namespace V1_0 {
+-namespace implementation {
+ 
+-using ::android::hardware::Return;
+-using ::android::hardware::Void;
+-using ::android::hardware::hidl_vec;
+-using ::android::hardware::ir::V1_0::ConsumerIrFreqRange;
+-using ::android::hardware::ir::V1_0::IConsumerIr;
+-
+-class ConsumerIr : public IConsumerIr {
+-   public:
++class ConsumerIr : public BnConsumerIr {
++  public:
+     ConsumerIr();
+-
+-    Return<bool> transmit(int32_t carrierFreq, const hidl_vec<int32_t>& pattern) override;
+-    Return<void> getCarrierFreqs(getCarrierFreqs_cb _hidl_cb) override;
++    ::ndk::ScopedAStatus getCarrierFreqs(
++            ::std::vector<::aidl::android::hardware::ir::ConsumerIrFreqRange>* _aidl_return)
++            override;
++    ::ndk::ScopedAStatus transmit(int32_t carrierFreqHz,
++                                  const ::std::vector<int32_t>& pattern) override;
++
++  private:
++    std::vector<ConsumerIrFreqRange> kRangeVec;
++    bool isInRange(int32_t carrierFreqHz);
+ };
+ 
+-}  // namespace implementation
+-}  // namespace V1_0
+ }  // namespace ir
+ }  // namespace hardware
+ }  // namespace android
+-
+-#endif  // ANDROID_HARDWARE_IR_V1_0_IR_H
++}  // namespace aidl
+diff --git a/ir/android.hardware.ir-service.lge.rc b/ir/android.hardware.ir-service.lge.rc
+new file mode 100644
+index 00000000..ba7339a6
+--- /dev/null
++++ b/ir/android.hardware.ir-service.lge.rc
+@@ -0,0 +1,10 @@
++#
++# SPDX-FileCopyrightText: 2018 The LineageOS Project
++# SPDX-License-Identifier: Apache-2.0
++#
++
++service vendor.ir-default /vendor/bin/hw/android.hardware.ir-service.lge
++    class hal
++    user system
++    group system
++    shutdown critical
+diff --git a/ir/android.hardware.ir-service.lge.xml b/ir/android.hardware.ir-service.lge.xml
+new file mode 100644
+index 00000000..6068fef9
+--- /dev/null
++++ b/ir/android.hardware.ir-service.lge.xml
+@@ -0,0 +1,11 @@
++<!--
++    SPDX-FileCopyrightText: 2018 The LineageOS Project
++    SPDX-License-Identifier: Apache-2.0
++-->
++<manifest version="1.0" type="device">
++    <hal format="aidl">
++        <name>android.hardware.ir</name>
++        <version>1</version>
++        <fqname>IConsumerIr/default</fqname>
++    </hal>
++</manifest>
+diff --git a/ir/android.hardware.ir@1.0-service.lge.rc b/ir/android.hardware.ir@1.0-service.lge.rc
+deleted file mode 100644
+index 78b8037e..00000000
+--- a/ir/android.hardware.ir@1.0-service.lge.rc
++++ /dev/null
+@@ -1,4 +0,0 @@
+-service ir-hal-1-0 /vendor/bin/hw/android.hardware.ir@1.0-service.lge
+-    class hal
+-    user system
+-    group system
+diff --git a/ir/service.cpp b/ir/service.cpp
+index bcd0894a..6aeb98ff 100644
+--- a/ir/service.cpp
++++ b/ir/service.cpp
+@@ -1,49 +1,24 @@
+ /*
+- * Copyright 2018 The LineageOS Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
++ * SPDX-FileCopyrightText: 2018 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
+  */
+ 
+-#define LOG_TAG "android.hardware.ir@1.0-service.lge"
+-
+-#include <hidl/HidlTransportSupport.h>
+-
+ #include "ConsumerIr.h"
+ 
+-using android::hardware::configureRpcThreadpool;
+-using android::hardware::joinRpcThreadpool;
+-
+-using android::hardware::ir::V1_0::IConsumerIr;
+-using android::hardware::ir::V1_0::implementation::ConsumerIr;
++#include <android-base/logging.h>
++#include <android/binder_manager.h>
++#include <android/binder_process.h>
+ 
+-using android::OK;
+-using android::status_t;
++using aidl::android::hardware::ir::ConsumerIr;
+ 
+ int main() {
+-    android::sp<IConsumerIr> service = new ConsumerIr();
+-
+-    configureRpcThreadpool(1, true /*callerWillJoin*/);
+-
+-    status_t status = service->registerAsService();
+-    if (status != OK) {
+-        ALOGE("Cannot register ConsumerIr HAL service.");
+-        return 1;
+-    }
+-
+-    ALOGI("ConsumerIr HAL service ready.");
++    ABinderProcess_setThreadPoolMaxThreadCount(0);
++    std::shared_ptr<ConsumerIr> hal = ::ndk::SharedRefBase::make<ConsumerIr>();
+ 
+-    joinRpcThreadpool();
++    const std::string instance = std::string(ConsumerIr::descriptor) + "/default";
++    binder_status_t status = AServiceManager_addService(hal->asBinder().get(), instance.c_str());
++    CHECK_EQ(status, STATUS_OK);
+ 
+-    ALOGI("ConsumerIr HAL service failed to join thread pool.");
+-    return 1;
++    ABinderProcess_joinThreadPool();
++    return EXIT_FAILURE;  // should not reach
+ }

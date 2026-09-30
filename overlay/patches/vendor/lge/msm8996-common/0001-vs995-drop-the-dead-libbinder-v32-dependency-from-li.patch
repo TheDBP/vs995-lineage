@@ -21,13 +21,12 @@ the reference is therefore the narrow fix.
 Deliberately not deleting the blob: something else in this vendor set may load it, and that would only
 show up at runtime. Nor pinning hardware/lineage/compat back to 22.2, which would rewind every other
 shim on the branch to get one .so back.
-
 ---
  Android.bp | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/Android.bp b/Android.bp
-index 7db749e..8cce851 100644
+index ea9c8ea..a63254a 100644
 --- a/Android.bp
 +++ b/Android.bp
 @@ -84,11 +84,11 @@ cc_prebuilt_library_shared {

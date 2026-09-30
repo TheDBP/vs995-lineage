@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 17:18:05 -0400
+Subject: [PATCH] msm8996-common: drop the light@2.0 HIDL manifest entry
+
+The interface no longer exists and the replacement AIDL service ships its
+own VINTF fragment, so declaring it here would fail the manifest check.
+
+---
+ manifest.xml | 9 ---------
+ 1 file changed, 9 deletions(-)
+
+diff --git a/manifest.xml b/manifest.xml
+index 60be3269..4ffb8f6a 100644
+--- a/manifest.xml
++++ b/manifest.xml
+@@ -91,15 +91,6 @@
+             <instance>default</instance>
+         </interface>
+     </hal>
+-    <hal format="hidl">
+-        <name>android.hardware.light</name>
+-        <transport>hwbinder</transport>
+-        <version>2.0</version>
+-        <interface>
+-            <name>ILight</name>
+-            <instance>default</instance>
+-        </interface>
+-    </hal>
+     <hal format="hidl">
+         <name>android.hardware.media.omx</name>
+         <transport>hwbinder</transport>
