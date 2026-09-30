@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 18:17:31 -0400
+Subject: [PATCH] qcwcn: gate wpa_supplicant.conf on BOARD_WLAN_DEVICE
+
+This prebuilt_etc is unconditional, while the identically named one in
+hardware/broadcom/wlan/bcmdhd/config is gated on board_wlan_device. A
+Qualcomm SoC with Broadcom Wi-Fi therefore defines the module twice and
+kati refuses the build:
+
+  base_rules.mk:320: error: hardware/qcom-caf/wlan/qcwcn/config:
+  MODULE.TARGET.ETC.wpa_supplicant.conf already defined by
+  hardware/broadcom/wlan/bcmdhd/config.
+
+Adds the same guard with "qcwcn", so each tree contributes the file only
+for the driver actually in use. Devices on qcwcn are unaffected.
+
+---
+ qcwcn/config/Android.bp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/qcwcn/config/Android.bp b/qcwcn/config/Android.bp
+index a0f4eb5..81a4b27 100644
+--- a/qcwcn/config/Android.bp
++++ b/qcwcn/config/Android.bp
+@@ -17,6 +17,10 @@ prebuilt_etc {
+     src: ":wpa_supplicant_conf_gen",
+     sub_dir: "wifi",
+     vendor: true,
++    enabled: select(soong_config_variable("wpa_supplicant_8", "board_wlan_device"), {
++        "qcwcn": true,
++        default: false,
++    }),
+     licenses: [
+         "external_wpa_supplicant_8_license",
+     ],

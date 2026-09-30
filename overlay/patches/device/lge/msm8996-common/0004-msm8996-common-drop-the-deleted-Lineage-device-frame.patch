@@ -13,7 +13,6 @@ so naming the old path only breaks the build:
   module "framework_compatibility_matrix.device.xml" variant
   "android_common": source path
   "vendor/lineage/config/device_framework_matrix.xml" does not exist
-
 ---
  BoardConfigCommon.mk | 3 +--
  1 file changed, 1 insertion(+), 2 deletions(-)
