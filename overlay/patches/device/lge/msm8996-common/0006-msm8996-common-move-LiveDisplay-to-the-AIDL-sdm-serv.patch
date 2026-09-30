@@ -9,7 +9,6 @@ hardware/lineage/interfaces/livedisplay/aidl/sdm. Nothing here set the
 livedisplay_sdm soong config, and the module's selects treat an unset value
 as the default branch, so display mode and picture adjustment stay enabled
 exactly as before.
-
 ---
  msm8996.mk | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

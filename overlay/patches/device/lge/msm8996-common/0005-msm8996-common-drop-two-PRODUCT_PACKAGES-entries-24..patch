@@ -13,7 +13,6 @@ disable_configstore is gone from the tree entirely, configstore having been
 removed from AOSP. The suspend HAL needs no device entry either: it is AIDL
 now and build/make/target/product/base_system.mk already installs
 android.system.suspend-service for every product.
-
 ---
  msm8996.mk | 8 --------
  1 file changed, 8 deletions(-)

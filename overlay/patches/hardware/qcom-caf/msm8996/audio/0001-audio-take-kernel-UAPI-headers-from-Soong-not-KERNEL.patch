@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 19:00:56 -0400
+Subject: [PATCH] audio: take kernel UAPI headers from Soong, not
+ KERNEL_OBJ/usr
+
+24.0 generates kernel headers with a Soong genrule and exports them as the
+generated_kernel_headers library. Nothing writes the old make location any
+more, so depending on it stops the build before a single object compiles:
+
+  "out/target/product/<device>/obj/KERNEL_OBJ/usr", needed by
+  ".../audio.primary.msm8996_intermediates/audio_hw.o", missing and no
+  known rule to make it
+
+generated_kernel_includes already exports usr/include and
+usr/techpack/audio/include, which is exactly what the six
+LOCAL_ADDITIONAL_DEPENDENCIES lines and nine include paths were reaching
+for, so the header library replaces both. post_proc already used this form
+for audio_kernel_headers, and every newer CAF audio tree in the platform
+uses it for this one.
+
+---
+ hal/Android.mk       |  7 ++-----
+ post_proc/Android.mk | 14 ++++----------
+ 2 files changed, 6 insertions(+), 15 deletions(-)
+
+diff --git a/hal/Android.mk b/hal/Android.mk
+index 362af77ec..10dd7d829 100644
+--- a/hal/Android.mk
++++ b/hal/Android.mk
+@@ -85,9 +85,7 @@ LOCAL_SRC_FILES := \
+ 
+ LOCAL_SRC_FILES += audio_extn/audio_extn.c \
+                    audio_extn/utils.c
+-LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+-LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include
+-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+ 
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DLKM)),true)
+   LOCAL_HEADER_LIBRARIES += audio_kernel_headers
+@@ -372,8 +370,7 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_LISTEN)),true)
+ endif
+ 
+ ifeq ($(TARGET_COMPILE_WITH_MSM_KERNEL),true)
+-        LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include
+-        LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++        LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+ endif
+ 
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_EXT_HDMI)),true)
+diff --git a/post_proc/Android.mk b/post_proc/Android.mk
+index 171c164a1..63a44d408 100644
+--- a/post_proc/Android.mk
++++ b/post_proc/Android.mk
+@@ -65,12 +65,10 @@ LOCAL_MODULE_RELATIVE_PATH := soundfx
+ LOCAL_MODULE:= libqcompostprocbundle
+ LOCAL_VENDOR_MODULE := true
+ 
+-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+ 
+ LOCAL_C_INCLUDES := \
+         external/tinyalsa/include \
+-        $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
+-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include \
+         $(call include-path-for, audio-effects)
+ 
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DLKM)),true)
+@@ -80,8 +78,7 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DLKM)),true)
+ endif
+ 
+ ifeq ($(TARGET_COMPILE_WITH_MSM_KERNEL),true)
+-        LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include
+-        LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++        LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+ endif
+ 
+ include $(BUILD_SHARED_LIBRARY)
+@@ -123,12 +120,10 @@ LOCAL_MODULE_RELATIVE_PATH := soundfx
+ LOCAL_MODULE:= libvolumelistener
+ LOCAL_VENDOR_MODULE := true
+ 
+-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+ 
+ LOCAL_C_INCLUDES := \
+         $(call project-path-for,qcom-audio)/hal \
+-        $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
+-        $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include \
+         external/tinyalsa/include \
+         $(call include-path-for, audio-effects) \
+         $(call include-path-for, audio-route) \
+@@ -142,8 +137,7 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DLKM)),true)
+ endif
+ 
+ ifeq ($(TARGET_COMPILE_WITH_MSM_KERNEL),true)
+-        LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include
+-        LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++        LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+ endif
+ 
+ include $(BUILD_SHARED_LIBRARY)
