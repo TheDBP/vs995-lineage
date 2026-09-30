@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 16:38:35 -0400
+Subject: [PATCH] vs995: drop the libwifi-hal-ctrl prebuilt, the platform
+ builds it now
+
+Soong refuses the tree:
+
+  vendor/lge/msm8996-common/Android.bp: module "libwifi-hal-ctrl" found in multiple
+      namespaces (hardware/qcom-caf/wlan/qcwcn and vendor/lge/msm8996-common)
+      when including in system partition
+
+On 22.2 only the blob provided it: the platform's copies lived in hardware/qcom/wlan/legacy and
+wcn6740, neither of which this device pulls in. For 24.0 upstream added libwifi-hal-ctrl to
+hardware/qcom-caf/wlan/qcwcn, which is the wlan tree msm8996 does use, so the same name now comes from
+two namespaces at once.
+
+Removing the prebuilt rather than the platform module: the platform builds it from source against the
+headers it also ships (libwifi-hal-ctrl_headers), and a 2017 vendor .so is the copy to lose when the two
+disagree.
+
+---
+ Android.bp | 21 ---------------------
+ 1 file changed, 21 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index ea9c8ea..7db749e 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -1758,27 +1758,6 @@ cc_prebuilt_library_shared {
+ 	soc_specific: true,
+ }
+ 
+-cc_prebuilt_library_shared {
+-	name: "libwifi-hal-ctrl",
+-	owner: "lge",
+-	strip: {
+-		none: true,
+-	},
+-	target: {
+-		android_arm: {
+-			srcs: ["proprietary/vendor/lib/libwifi-hal-ctrl.so"],
+-			shared_libs: ["libc++", "libc", "libm", "libdl", ],
+-		},
+-		android_arm64: {
+-			srcs: ["proprietary/vendor/lib64/libwifi-hal-ctrl.so"],
+-			shared_libs: ["libc++", "libc", "libm", "libdl", ],
+-		},
+-	},
+-	compile_multilib: "both",
+-	prefer: true,
+-	soc_specific: true,
+-}
+-
+ cc_prebuilt_library_shared {
+ 	name: "libxml",
+ 	owner: "lge",
