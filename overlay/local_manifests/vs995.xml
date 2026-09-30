@@ -37,6 +37,13 @@
   <project path="hardware/qcom-caf/msm8996/audio"   name="LineageOS/android_hardware_qcom_audio"   remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
   <project path="hardware/qcom-caf/msm8996/display" name="LineageOS/android_hardware_qcom_display" remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
   <project path="hardware/qcom-caf/msm8996/media"   name="LineageOS/android_hardware_qcom_media"   remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
+  <!-- lineage-24.0's QTI power HAL added a dependency on
+       vendor.qti.hardware.display.config-V12-ndk, which comes from the SoC's display tree. The
+       msm8996 display tree defines no display.config at all, so the module cannot resolve. 23.2 is the
+       newest branch of this repo without that dependency; 22.2 also works but gives up two releases of
+       fixes for nothing. -->
+  <remove-project name="LineageOS/android_vendor_qcom_opensource_power" />
+  <project path="vendor/qcom/opensource/power" name="LineageOS/android_vendor_qcom_opensource_power" remote="github" revision="lineage-23.2" groups="qcom" />
   <project name="LineageOS/android_hardware_sony_timekeep"    path="hardware/sony/timekeep"    remote="github" revision="lineage-24.0" />
   <project name="LineageOS/android_kernel_lge_msm8996"        path="kernel/lge/msm8996"        remote="github" revision="lineage-22.2" />
   <project name="TheMuppets/proprietary_vendor_lge_vs995"     path="vendor/lge/vs995"          remote="github" revision="lineage-22.2" />
