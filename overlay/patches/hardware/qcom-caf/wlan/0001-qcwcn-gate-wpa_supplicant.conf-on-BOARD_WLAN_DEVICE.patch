@@ -14,7 +14,6 @@ kati refuses the build:
 
 Adds the same guard with "qcwcn", so each tree contributes the file only
 for the driver actually in use. Devices on qcwcn are unaffected.
-
 ---
  qcwcn/config/Android.bp | 4 ++++
  1 file changed, 4 insertions(+)

@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 18:35:00 -0400
+Subject: [PATCH] msm8996-common: drop two PRODUCT_PACKAGES entries 24.0
+ deleted
+
+kati refuses a build that names a module which does not exist:
+
+  lineage_vs995.mk includes non-existent modules in PRODUCT_PACKAGES
+  Offending entries: android.system.suspend@1.0 disable_configstore
+
+disable_configstore is gone from the tree entirely, configstore having been
+removed from AOSP. The suspend HAL needs no device entry either: it is AIDL
+now and build/make/target/product/base_system.mk already installs
+android.system.suspend-service for every product.
+
+---
+ msm8996.mk | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/msm8996.mk b/msm8996.mk
+index 8fd34054..03c8ade3 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -109,10 +109,6 @@ PRODUCT_COPY_FILES += \
+     frameworks/native/data/etc/android.hardware.camera.full.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.full.xml \
+     frameworks/native/data/etc/android.hardware.camera.raw.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.raw.xml
+ 
+-# Configstore
+-PRODUCT_PACKAGES += \
+-    disable_configstore
+-
+ # Control groups and task profiles
+ PRODUCT_COPY_FILES += \
+     system/core/libprocessgroup/profiles/cgroups_28.json:$(TARGET_COPY_OUT_VENDOR)/etc/cgroups.json \
+@@ -378,10 +374,6 @@ PRODUCT_SOONG_NAMESPACES += \
+     hardware/broadcom/libbt \
+     hardware/lge
+ 
+-# System Suspend
+-PRODUCT_PACKAGES += \
+-    android.system.suspend@1.0
+-
+ # Telephony
+ PRODUCT_PACKAGES += \
+     qti-telephony-hidl-wrapper \

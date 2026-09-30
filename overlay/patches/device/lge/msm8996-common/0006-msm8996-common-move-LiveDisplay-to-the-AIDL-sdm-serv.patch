@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 18:35:09 -0400
+Subject: [PATCH] msm8996-common: move LiveDisplay to the AIDL sdm service
+
+vendor.lineage.livedisplay@2.0-service-sdm no longer exists; 24.0 carries
+vendor.lineage.livedisplay-service.sdm under
+hardware/lineage/interfaces/livedisplay/aidl/sdm. Nothing here set the
+livedisplay_sdm soong config, and the module's selects treat an unset value
+as the default branch, so display mode and picture adjustment stay enabled
+exactly as before.
+
+---
+ msm8996.mk | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/msm8996.mk b/msm8996.mk
+index 03c8ade3..6009ce7a 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -239,7 +239,7 @@ PRODUCT_PACKAGES += \
+ 
+ # LiveDisplay
+ PRODUCT_PACKAGES += \
+-    vendor.lineage.livedisplay@2.0-service-sdm
++    vendor.lineage.livedisplay-service.sdm
+ 
+ # Lineage Health
+ PRODUCT_PACKAGES += \
