@@ -6,7 +6,13 @@
   <project name="LineageOS/android_device_lge_v20-common"     path="device/lge/v20-common"     remote="github" revision="lineage-22.2" />
   <project name="LineageOS/android_device_lge_msm8996-common" path="device/lge/msm8996-common" remote="github" revision="lineage-22.2" />
   <project name="LineageOS/android_hardware_lge"              path="hardware/lge"              remote="github" revision="lineage-22.2" />
-  <project name="LineageOS/android_hardware_sony_timekeep"    path="hardware/sony/timekeep"    remote="github" revision="lineage-22.2" />
+  <!-- lineage-24.0 dropped msm8996 from hardware/qcom-caf (it carries msm8953, sdm660 and
+       sm8150+ only). These three are the per-component CAF branches 22.2 used; the os_pickup
+       linkfiles in qcom-caf/common expect exactly these paths. -->
+  <project path="hardware/qcom-caf/msm8996/audio"   name="LineageOS/android_hardware_qcom_audio"   remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
+  <project path="hardware/qcom-caf/msm8996/display" name="LineageOS/android_hardware_qcom_display" remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
+  <project path="hardware/qcom-caf/msm8996/media"   name="LineageOS/android_hardware_qcom_media"   remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
+  <project name="LineageOS/android_hardware_sony_timekeep"    path="hardware/sony/timekeep"    remote="github" revision="lineage-24.0" />
   <project name="LineageOS/android_kernel_lge_msm8996"        path="kernel/lge/msm8996"        remote="github" revision="lineage-22.2" />
   <project name="TheMuppets/proprietary_vendor_lge_vs995"     path="vendor/lge/vs995"          remote="github" revision="lineage-22.2" />
   <!-- The two common vendor trees are REQUIRED, not optional. The device trees pull them in with
