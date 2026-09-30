@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 16:49:38 -0400
+Subject: [PATCH] vs995: drop the dead libbinder-v32 dependency from
+ libkeystore_binder
+
+Soong on 24.0:
+
+  vendor/lge/msm8996-common/Android.bp:78:1: "libkeystore_binder" depends on
+      undefined module "libbinder-v32"
+
+libbinder-v32 is a VNDK-32 shim that hardware/lineage/compat used to provide. On lineage-24.0 upstream
+removed both the module and the prebuilt .so from that repo, while keeping the siblings this device also
+wants -- libhidlbase-v32, libutils-v33 and libprotobuf-cpp-lite-v29 are all still there. So this is one
+retired shim, not VNDK going away.
+
+libkeystore_binder is a prebuilt, so shared_libs only orders Soong's dependencies; it does not change
+what the .so links against at runtime, which is whatever DT_NEEDED it was built with in 2017. Dropping
+the reference is therefore the narrow fix.
+
+Deliberately not deleting the blob: something else in this vendor set may load it, and that would only
+show up at runtime. Nor pinning hardware/lineage/compat back to 22.2, which would rewind every other
+shim on the branch to get one .so back.
+
+---
+ Android.bp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index 7db749e..8cce851 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -84,11 +84,11 @@ cc_prebuilt_library_shared {
+ 	target: {
+ 		android_arm: {
+ 			srcs: ["proprietary/system/lib/libkeystore_binder.so"],
+-			shared_libs: ["libbinder-v32", "liblog", "libprotobuf-cpp-lite-v29", "libutils", "libhwbinder", "libhidlbase", "android.hardware.keymaster@3.0", "libc++", "libdl", "libc", "libm", ],
++			shared_libs: ["liblog", "libprotobuf-cpp-lite-v29", "libutils", "libhwbinder", "libhidlbase", "android.hardware.keymaster@3.0", "libc++", "libdl", "libc", "libm", ],
+ 		},
+ 		android_arm64: {
+ 			srcs: ["proprietary/system/lib64/libkeystore_binder.so"],
+-			shared_libs: ["libbinder-v32", "liblog", "libprotobuf-cpp-lite-v29", "libutils", "libhwbinder", "libhidlbase", "android.hardware.keymaster@3.0", "libc++", "libdl", "libc", "libm", ],
++			shared_libs: ["liblog", "libprotobuf-cpp-lite-v29", "libutils", "libhwbinder", "libhidlbase", "android.hardware.keymaster@3.0", "libc++", "libdl", "libc", "libm", ],
+ 		},
+ 	},
+ 	compile_multilib: "both",
