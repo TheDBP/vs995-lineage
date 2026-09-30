@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=8f6601b0b0166f157c6f96604be8d2c0a11ae45d
-subject=bootstrap: REPO_DISSOCIATE must absorb, not probe
-synced=2026-09-30T19:32:06Z
+commit=03f4d5175b38747d86b070b9a1c6754a48812539
+subject=patches: 24.0 fsgen fix for devices with no vendor partition
+synced=2026-09-30T21:32:04Z
