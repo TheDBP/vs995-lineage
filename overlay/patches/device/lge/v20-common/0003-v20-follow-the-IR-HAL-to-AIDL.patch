@@ -5,7 +5,6 @@ Subject: [PATCH] v20: follow the IR HAL to AIDL
 
 The service ships its own VINTF fragment now, so the HIDL entry here would
 fail the manifest check.
-
 ---
  manifest.xml | 9 ---------
  v20.mk       | 2 +-

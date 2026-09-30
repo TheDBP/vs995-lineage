@@ -17,7 +17,6 @@ namespace, which is where libcir_driver is declared; under make the
 dependency resolved globally. TARGET_USE_LGE_IR guarded the make module
 and had no other reader, so it goes with it -- every device sharing this
 tree set it to true.
-
 ---
  Android.bp                                |  4 +
  BoardConfigCommon.mk                      |  5 +-

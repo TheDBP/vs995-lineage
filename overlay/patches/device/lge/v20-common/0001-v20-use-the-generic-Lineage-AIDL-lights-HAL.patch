@@ -12,7 +12,6 @@ service is a direct replacement and the device implementation goes away.
 Known delta: the old service applied a cube-root gamma curve to the
 backlight value. The generic one scales linearly against max_brightness,
 so low brightness settings land dimmer than before.
-
 ---
  light/Android.bp                              |  30 ------
  light/Light.cpp                               | 100 ------------------

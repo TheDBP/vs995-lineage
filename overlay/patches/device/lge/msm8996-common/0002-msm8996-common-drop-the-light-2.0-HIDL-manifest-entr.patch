@@ -5,7 +5,6 @@ Subject: [PATCH] msm8996-common: drop the light@2.0 HIDL manifest entry
 
 The interface no longer exists and the replacement AIDL service ships its
 own VINTF fragment, so declaring it here would fail the manifest check.
-
 ---
  manifest.xml | 9 ---------
  1 file changed, 9 deletions(-)

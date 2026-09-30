@@ -57,4 +57,10 @@
        (vs995-vendor.mk itself is self-contained; it does not inherit these.) -->
   <project name="TheMuppets/proprietary_vendor_lge_v20-common"     path="vendor/lge/v20-common"     remote="github" revision="lineage-22.2" />
   <project name="TheMuppets/proprietary_vendor_lge_msm8996-common" path="vendor/lge/msm8996-common" remote="github" revision="lineage-22.2" />
+  <!-- GCC 4.9 prebuilts for the kernel. 24.0 deleted them, and this kernel is 4.4, so
+       KERNEL_NO_GCC is false and forge's lineage-24.0 vendor/lineage patch takes the GCC path:
+       clang as CC with the GCC prebuilts supplying binutils. Same pins as lineage-22.2. -->
+  <project name="LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9" path="prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9" remote="github" revision="lineage-19.1" clone-depth="1" />
+  <project name="LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9" path="prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9" remote="github" revision="lineage-19.1" clone-depth="1" />
+
 </manifest>

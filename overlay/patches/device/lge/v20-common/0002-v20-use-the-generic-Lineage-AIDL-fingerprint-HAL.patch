@@ -12,7 +12,6 @@ is unchanged.
 persist.vendor.fingerprint.type is required: the service calls
 UNIMPLEMENTED(FATAL) on a value it does not recognise, and an unset
 property reaches that branch.
-
 ---
  v20.mk | 7 ++++++-
  1 file changed, 6 insertions(+), 1 deletion(-)
