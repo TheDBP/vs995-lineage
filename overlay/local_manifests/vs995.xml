@@ -9,6 +9,31 @@
   <!-- lineage-24.0 dropped msm8996 from hardware/qcom-caf (it carries msm8953, sdm660 and
        sm8150+ only). These three are the per-component CAF branches 22.2 used; the os_pickup
        linkfiles in qcom-caf/common expect exactly these paths. -->
+  <!-- The namespace itself. vendor/lge/*/Android.bp declares soong_namespace
+       "hardware/qcom-caf/msm8996", which needs an Android.bp AT that path — created upstream by
+       linkfiles on hardware/qcom-caf/common. 24.0 kept the project and the os_pickup.bp/.mk files but
+       dropped the msm8996 entries with the platform, so they are re-declared here. msm8996 is a legacy
+       UM platform: os_pickup.bp, not the os_pickup_qssi.bp the sm8xxx targets use.
+       repo cannot add linkfiles to an existing project, hence remove-project then re-declare, keeping
+       every linkfile 24.0 already had. -->
+  <remove-project name="LineageOS/android_hardware_qcom-caf_common" />
+  <project path="hardware/qcom-caf/common" name="LineageOS/android_hardware_qcom-caf_common" groups="qcom">
+    <linkfile src="os_pickup_aosp.mk" dest="hardware/qcom/Android.mk" />
+    <linkfile src="os_pickup_sepolicy_vndr.mk" dest="device/qcom/sepolicy_vndr/SEPolicy.mk" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/msm8953/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sdm660/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8150/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8250/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8350/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8450/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8450-6.6/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8550/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8650/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8750/Android.bp" />
+    <linkfile src="os_pickup_qssi.bp" dest="hardware/qcom-caf/sm8850/Android.bp" />
+    <linkfile src="os_pickup.bp" dest="hardware/qcom-caf/msm8996/Android.bp" />
+    <linkfile src="os_pickup.mk" dest="hardware/qcom-caf/msm8996/Android.mk" />
+  </project>
   <project path="hardware/qcom-caf/msm8996/audio"   name="LineageOS/android_hardware_qcom_audio"   remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
   <project path="hardware/qcom-caf/msm8996/display" name="LineageOS/android_hardware_qcom_display" remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
   <project path="hardware/qcom-caf/msm8996/media"   name="LineageOS/android_hardware_qcom_media"   remote="github" revision="lineage-22.2-caf-msm8996" groups="qcom,legacy-qcom" />
