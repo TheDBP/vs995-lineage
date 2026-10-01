@@ -14,7 +14,6 @@ check_vintf does:
 
 Nothing serves the HIDL interface any more, so the declaration was a claim
 the image could not honour.
-
 ---
  manifest.xml | 9 ---------
  1 file changed, 9 deletions(-)

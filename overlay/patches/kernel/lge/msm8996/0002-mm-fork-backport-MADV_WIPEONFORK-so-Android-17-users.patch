@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 10:06:52 -0400
+Subject: [PATCH] mm,fork: backport MADV_WIPEONFORK so Android 17 userspace can
+ start
+
+Every binary in a 24.0 image dies before main() on this kernel. bionic's
+arc4random init is:
+
+  if (madvise(p, size, MADV_WIPEONFORK) == -1)
+      async_safe_fatal("arc4random data MADV_WIPEONFORK failed: %m");
+
+MADV_WIPEONFORK arrived in 4.14 and this kernel's highest MADV_ is 17, so
+madvise returns EINVAL and libc aborts. That is why recovery panicked with
+"Attempted to kill init! exitcode=0x00007f00" and logged nothing: init never
+reached its first log line. Reproduced directly by running the 24.0 linker64
+under the running 22.2 system, which prints that exact fatal.
+
+Backport of d2cd9ede6e19 ("mm,fork: introduce MADV_WIPEONFORK"), with one
+change that matters: upstream uses 0x02000000 for VM_WIPEONFORK, which is
+VM_ARCH_2 here. Taking it would alias an existing flag. 0x00800000 is the
+free bit in this tree (0x08000000 is VM_SOFTDIRTY).
+
+Implemented rather than stubbed. Returning success from madvise without
+honouring the flag would let a forked child inherit the parent's arc4random
+state, which is the exact property the call exists to guarantee, in every
+process on the system.
+
+dup_mmap skips copy_page_range for a VM_WIPEONFORK range so the child faults
+in zeroes. retval is 0 there -- the only earlier assignment is
+vma_dup_policy(), which branches away on error -- so skipping the copy cannot
+propagate a stale error.
+
+---
+ include/linux/mm.h                     |  1 +
+ include/uapi/asm-generic/mman-common.h |  3 +++
+ kernel/fork.c                          |  7 ++++++-
+ mm/madvise.c                           | 18 ++++++++++++++++++
+ 4 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index af0595bef9c8..cf1ecfa86c4c 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -159,6 +159,7 @@ extern unsigned int kobjsize(const void *objp);
+ #define VM_ACCOUNT	0x00100000	/* Is a VM accounted object */
+ #define VM_NORESERVE	0x00200000	/* should the VM suppress accounting */
+ #define VM_HUGETLB	0x00400000	/* Huge TLB Page VM */
++#define VM_WIPEONFORK	0x00800000	/* Wipe VMA contents in child */
+ #define VM_ARCH_1	0x01000000	/* Architecture-specific flag */
+ #define VM_ARCH_2	0x02000000
+ #define VM_DONTDUMP	0x04000000	/* Do not include in the core dump */
+diff --git a/include/uapi/asm-generic/mman-common.h b/include/uapi/asm-generic/mman-common.h
+index a74dd84bbb6d..cba3feaa2ce6 100644
+--- a/include/uapi/asm-generic/mman-common.h
++++ b/include/uapi/asm-generic/mman-common.h
+@@ -57,6 +57,9 @@
+ 					   overrides the coredump filter bits */
+ #define MADV_DODUMP	17		/* Clear the MADV_DONTDUMP flag */
+ 
++#define MADV_WIPEONFORK 18		/* Zero memory on fork, child only */
++#define MADV_KEEPONFORK 19		/* Undo MADV_WIPEONFORK */
++
+ /* compatibility flags */
+ #define MAP_FILE	0
+ 
+diff --git a/kernel/fork.c b/kernel/fork.c
+index c25ebf6dd7f9..3a43f9070315 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -518,7 +518,12 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
+ 		rb_parent = &tmp->vm_rb;
+ 
+ 		mm->map_count++;
+-		retval = copy_page_range(mm, oldmm, mpnt);
++		/*
++		 * MADV_WIPEONFORK: leave the child's range unpopulated so it
++		 * faults in zeroes rather than inheriting the parent's pages.
++		 */
++		if (!(tmp->vm_flags & VM_WIPEONFORK))
++			retval = copy_page_range(mm, oldmm, mpnt);
+ 
+ 		if (tmp->vm_ops && tmp->vm_ops->open)
+ 			tmp->vm_ops->open(tmp);
+diff --git a/mm/madvise.c b/mm/madvise.c
+index d1d09bdf9a72..786e96778f79 100644
+--- a/mm/madvise.c
++++ b/mm/madvise.c
+@@ -72,6 +72,22 @@ static long madvise_behavior(struct vm_area_struct *vma,
+ 		}
+ 		new_flags &= ~VM_DONTCOPY;
+ 		break;
++	case MADV_WIPEONFORK:
++	case MADV_KEEPONFORK:
++		/*
++		 * MADV_WIPEONFORK is only supported on anonymous private memory:
++		 * there is nothing to wipe in a file or shared mapping, and the
++		 * child would see the parent's data through the same object.
++		 */
++		if (vma->vm_file || vma->vm_flags & VM_SHARED) {
++			error = -EINVAL;
++			goto out;
++		}
++		if (behavior == MADV_WIPEONFORK)
++			new_flags |= VM_WIPEONFORK;
++		else
++			new_flags &= ~VM_WIPEONFORK;
++		break;
+ 	case MADV_DONTDUMP:
+ 		new_flags |= VM_DONTDUMP;
+ 		break;
+@@ -406,6 +422,8 @@ madvise_behavior_valid(int behavior)
+ #endif
+ 	case MADV_DONTDUMP:
+ 	case MADV_DODUMP:
++	case MADV_WIPEONFORK:
++	case MADV_KEEPONFORK:
+ 		return true;
+ 
+ 	default:

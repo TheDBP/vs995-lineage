@@ -18,7 +18,6 @@ using.
 Whether A2DP offload still works is a runtime question for the first boot,
 not something this can settle. bonito's precedent, if it does not, is to move
 the Bluetooth audio HAL to AIDL rather than restore this entry.
-
 ---
  manifest.xml | 9 ---------
  1 file changed, 9 deletions(-)

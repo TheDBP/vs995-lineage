@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 10:05:24 -0400
+Subject: [PATCH] msm8996-common: install init.recovery.qcom.rc as a module
+
+22.2's build/make/core/Makefile copied $(TARGET_RECOVERY_DEVICE_DIRS)/recovery/root
+into the recovery ramdisk via recovery_root_private. 24.0 has no such code --
+the recovery image is assembled by Soong -- so the board variable is inert and
+this file stopped being installed without any warning. It is absent from the
+24.0 recovery ramdisk and present in the 22.2 one.
+
+It is not cosmetic. It creates the /dev/block/bootdevice symlink, without which
+nothing resolves through by-name and recovery cannot mount or format data, and
+it sets sys.usb.configfs=1, which is what gives recovery working USB and
+therefore adb sideload.
+
+prebuilt_root with recovery: true puts it back at the ramdisk root. Checked
+recovery/root for anything else: that one file is all of it.
+
+---
+ BoardConfigCommon.mk |  2 ++
+ msm8996.mk           |  7 +++++++
+ recovery/Android.bp  | 14 ++++++++++++++
+ 3 files changed, 23 insertions(+)
+ create mode 100644 recovery/Android.bp
+
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index baec91bb..28a4f2b9 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -137,6 +137,8 @@ TARGET_HAS_NO_WLAN_STATS := true
+ BOARD_USES_QCOM_HARDWARE := true
+ 
+ # Recovery
++# Inert on 24.0: build/make/core/Makefile no longer implements recovery_root_private, so nothing
++# reads this. recovery/root files are installed as Soong modules instead; see recovery/Android.bp.
+ TARGET_RECOVERY_DEVICE_DIRS += $(COMMON_PATH)
+ TARGET_RECOVERY_FSTAB := $(COMMON_PATH)/rootdir/etc/fstab.qcom
+ 
+diff --git a/msm8996.mk b/msm8996.mk
+index a4c82cf3..ae51a068 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -243,6 +243,13 @@ PRODUCT_PACKAGES += \
+     android.hardware.keymaster@3.0-impl \
+     android.hardware.keymaster@3.0-service
+ 
++# Recovery
++# Without this the recovery ramdisk has no /dev/block/bootdevice symlink (so nothing resolves by
++# name, and data cannot be mounted or formatted) and no sys.usb.configfs, which is what gives
++# recovery working USB -- i.e. adb sideload.
++PRODUCT_PACKAGES += \
++    init.recovery.qcom.rc
++
+ # LiveDisplay
+ PRODUCT_PACKAGES += \
+     vendor.lineage.livedisplay-service.sdm
+diff --git a/recovery/Android.bp b/recovery/Android.bp
+new file mode 100644
+index 00000000..54b2eb80
+--- /dev/null
++++ b/recovery/Android.bp
+@@ -0,0 +1,14 @@
++//
++// SPDX-FileCopyrightText: The LineageOS Project
++// SPDX-License-Identifier: Apache-2.0
++//
++
++// 24.0 dropped the make mechanism that copied device recovery/root into the recovery ramdisk:
++// build/make/core/Makefile no longer has recovery_root_private, so TARGET_RECOVERY_DEVICE_DIRS in
++// BoardConfigCommon.mk is inert and this file silently stopped being installed. The recovery image
++// is assembled by Soong now, so deliver it as a module instead.
++prebuilt_root {
++    name: "init.recovery.qcom.rc",
++    src: "root/init.recovery.qcom.rc",
++    recovery: true,
++}
