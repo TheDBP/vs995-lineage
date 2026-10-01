@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 04:34:46 -0400
+Subject: [PATCH] rootdir: the init shell scripts are not ELF binaries
+
+24.0 runs check_elf_file on prebuilt modules whose class is EXECUTABLES, and
+these are shell scripts, so it rejects each one:
+
+  error: File "<path>/rootdir/bin/init.qcom.sh" must have a valid ELF magic
+  word.
+
+LOCAL_CHECK_ELF_FILES := false on exactly the script modules. Changing the
+class instead would move them out of /vendor/bin, where the init rc files
+expect to exec them.
+
+---
+ rootdir/Android.mk | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/rootdir/Android.mk b/rootdir/Android.mk
+index ba4061c5..670cea1b 100644
+--- a/rootdir/Android.mk
++++ b/rootdir/Android.mk
+@@ -16,6 +16,7 @@ LOCAL_MODULE       := init.power.sh
+ LOCAL_MODULE_TAGS  := optional
+ LOCAL_MODULE_CLASS := EXECUTABLES
+ LOCAL_SRC_FILES    := bin/init.power.sh
++LOCAL_CHECK_ELF_FILES := false
+ LOCAL_VENDOR_MODULE    := true
+ include $(BUILD_PREBUILT)
+ 
+@@ -34,6 +35,7 @@ LOCAL_MODULE       := init.qcom.sh
+ LOCAL_MODULE_TAGS  := optional
+ LOCAL_MODULE_CLASS := EXECUTABLES
+ LOCAL_SRC_FILES    := bin/init.qcom.sh
++LOCAL_CHECK_ELF_FILES := false
+ LOCAL_VENDOR_MODULE    := true
+ # init.radio.sh is defined in variant trees
+ LOCAL_REQUIRED_MODULES := init.radio.sh
+@@ -44,6 +46,7 @@ LOCAL_MODULE       := init.qcom.sensors.sh
+ LOCAL_MODULE_TAGS  := optional
+ LOCAL_MODULE_CLASS := EXECUTABLES
+ LOCAL_SRC_FILES    := bin/init.qcom.sensors.sh
++LOCAL_CHECK_ELF_FILES := false
+ LOCAL_VENDOR_MODULE    := true
+ include $(BUILD_PREBUILT)
+ 
+@@ -52,6 +55,7 @@ LOCAL_MODULE       := init.qcom.graphics.sh
+ LOCAL_MODULE_TAGS  := optional
+ LOCAL_MODULE_CLASS := EXECUTABLES
+ LOCAL_SRC_FILES    := bin/init.qcom.graphics.sh
++LOCAL_CHECK_ELF_FILES := false
+ LOCAL_VENDOR_MODULE    := true
+ include $(BUILD_PREBUILT)
+ 

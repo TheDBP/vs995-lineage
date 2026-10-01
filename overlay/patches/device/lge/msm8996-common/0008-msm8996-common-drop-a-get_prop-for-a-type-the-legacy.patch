@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 04:38:26 -0400
+Subject: [PATCH] msm8996-common: drop a get_prop for a type the legacy policy
+ lacks
+
+checkpolicy stops the build on it:
+
+  sepolicy/vendor/flags_health_check.te:100:ERROR 'unknown type
+  vendor_persist_camera_prop'
+
+vendor_persist_camera_prop exists only in device/qcom/sepolicy's prebuilt
+API snapshots, not in the legacy-um policy this SoC compiles, so nothing can
+be labelled with it and granting access to it means nothing. Removing the
+line loses no access.
+
+Checked the rest rather than waiting for checkpolicy to report them one
+build at a time: it names only the first. Of the 123 property types
+flags_health_check.te references this was the only undefined one, and it is
+the only one across all three device policy dirs.
+
+---
+ sepolicy/vendor/flags_health_check.te | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/sepolicy/vendor/flags_health_check.te b/sepolicy/vendor/flags_health_check.te
+index dfb1e177..0f66a431 100644
+--- a/sepolicy/vendor/flags_health_check.te
++++ b/sepolicy/vendor/flags_health_check.te
+@@ -97,7 +97,6 @@ get_prop(flags_health_check, vendor_nfc_nq_prop)
+ get_prop(flags_health_check, vendor_opengles_prop)
+ get_prop(flags_health_check, vendor_pd_locater_dbg_prop)
+ get_prop(flags_health_check, vendor_per_mgr_state_prop)
+-get_prop(flags_health_check, vendor_persist_camera_prop)
+ get_prop(flags_health_check, vendor_qcom_ims_prop)
+ get_prop(flags_health_check, vendor_qdcmss_prop)
+ get_prop(flags_health_check, vendor_qdma_prop)

@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 04:34:03 -0400
+Subject: [PATCH] binder: stop clang rejecting the deliberate binder_alloc type
+ mismatch
+
+clang makes -Wincompatible-pointer-types fatal, so six errors in
+binder_alloc.c end the build:
+
+  binder_alloc.c:222: assigning to 'struct binder_lru_page **' from
+  'struct binder_lru_page *'
+  binder_alloc.c:232: passing 'struct binder_lru_page **' to parameter of
+  type 'struct page **'
+
+The mismatch is intentional downstream. 83b0b662b5e8 partially reverted
+binder to get the IR blaster working, leaving binder_update_page_range()
+with the pre-LRU body that treats alloc->pages as "struct page **" while
+binder_alloc.h kept struct binder_lru_page; 63626be73f11 then quieted the
+resulting warnings by changing the local's declaration instead of the body.
+GCC accepted that and it is what 22.2 ships.
+
+So suppress rather than correct: rewriting the function to upstream LRU
+form would restore the path that revert deliberately removed, and IR is why
+it was removed. CFLAGS_binder_alloc.o keeps the diagnostic everywhere else.
+
+---
+ drivers/android/Makefile | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/android/Makefile b/drivers/android/Makefile
+index a01254c43ee3..ae542ff001c9 100644
+--- a/drivers/android/Makefile
++++ b/drivers/android/Makefile
+@@ -1,4 +1,15 @@
+ ccflags-y += -I$(src)			# needed for trace events
+ 
+ obj-$(CONFIG_ANDROID_BINDER_IPC)	+= binder.o binder_alloc.o
++
++# binder_alloc.c carries a deliberate type mismatch, not an accident: 83b0b662b5e8 partially
++# reverted binder to get the IR blaster working, which left binder_update_page_range() treating
++# alloc->pages as the pre-LRU "struct page **" while binder_alloc.h kept struct binder_lru_page,
++# and 63626be73f11 ("Fix a myriad of warnings") settled the mismatch in the declaration rather
++# than the body. GCC warned and shipped; clang makes -Wincompatible-pointer-types fatal.
++#
++# Suppressed for this one object rather than fixed, because writing the function back to upstream
++# LRU form would re-enable exactly the code path that revert removed, and the IR blaster is the
++# thing it was removed for. Scoped to the file so no other driver loses the diagnostic.
++CFLAGS_binder_alloc.o += -Wno-incompatible-pointer-types
+ obj-$(CONFIG_ANDROID_BINDER_IPC_SELFTEST) += binder_alloc_selftest.o

@@ -18,7 +18,6 @@ LOCAL_ADDITIONAL_DEPENDENCIES lines and nine include paths were reaching
 for, so the header library replaces both. post_proc already used this form
 for audio_kernel_headers, and every newer CAF audio tree in the platform
 uses it for this one.
-
 ---
  hal/Android.mk       |  7 ++-----
  post_proc/Android.mk | 14 ++++----------
