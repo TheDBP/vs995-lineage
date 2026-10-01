@@ -20,7 +20,9 @@
 # silently checks a different patch.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
-ADB=/media/Storage/Coding/tools/platform-tools/adb
+# adb from $ADB, else PATH. Never a hardcoded path: this file is published and a build-host
+# path in it is both wrong for everyone else and an environment leak.
+ADB="${ADB:-$(command -v adb 2>/dev/null)}"
 SRC="${BUILD_ROOT:-$PWD/build_output}/src"
 P=overlay/patches
 TREE_ONLY=0
