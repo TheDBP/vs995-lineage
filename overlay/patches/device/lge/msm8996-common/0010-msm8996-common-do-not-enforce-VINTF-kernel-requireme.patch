@@ -17,7 +17,6 @@ This disables an assertion, not a feature: the running system is unchanged,
 and the honest reading is that VINTF kernel guarantees are unverified here.
 It is the second platform floor this kernel sits below, the other being the
 eBPF loader's 4.9 map and program minimum.
-
 ---
  msm8996.mk | 8 +++++++-
  1 file changed, 7 insertions(+), 1 deletion(-)

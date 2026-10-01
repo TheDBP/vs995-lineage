@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 06:56:45 -0400
+Subject: [PATCH] manifest: raise the FCM target level to 7, the oldest 24.0
+ ships
+
+check_vintf cannot find a framework matrix for the level this declared:
+
+  ERROR: No such file or directory: Cannot find framework matrix at FCM
+  version 5.
+
+24.0 ships compatibility_matrix.7.xml and .8.xml plus the dated ones, so 5
+has nothing to compare against and 7 is the most permissive level available.
+Raising it asserts compliance with a newer matrix than this hardware was
+designed against; check_vintf reports any HAL that assertion gets wrong, so
+the claim is checked rather than assumed.
+
+---
+ manifest.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/manifest.xml b/manifest.xml
+index d4fa59f..b8b0d37 100644
+--- a/manifest.xml
++++ b/manifest.xml
+@@ -1,2 +1,2 @@
+-<manifest version="1.0" type="device" target-level="5">
++<manifest version="1.0" type="device" target-level="7">
+ </manifest>

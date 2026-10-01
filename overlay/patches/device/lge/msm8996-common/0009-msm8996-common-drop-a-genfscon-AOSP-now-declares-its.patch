@@ -13,7 +13,6 @@ rather than wrong and the label does not change.
 Swept the rest of the device's genfs_contexts against everything else in the
 compiled policy set rather than waiting for checkpolicy to report the next
 one: this was the only collision.
-
 ---
  sepolicy/vendor/genfs_contexts | 1 -
  1 file changed, 1 deletion(-)
