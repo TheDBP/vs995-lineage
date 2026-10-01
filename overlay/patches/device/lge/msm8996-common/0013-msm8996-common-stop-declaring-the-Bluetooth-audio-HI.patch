@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 08:38:48 -0400
+Subject: [PATCH] msm8996-common: stop declaring the Bluetooth audio HIDL HAL
+
+FCM 7 does not list it, so declaring it fails check_vintf:
+
+  The following instances are in the device manifest but not specified in
+  framework compatibility matrix:
+    android.hardware.bluetooth.audio@2.1::IBluetoothAudioProvidersFactory/default
+
+24.0's Bluetooth stack talks to the AIDL provider, so a HIDL 2.1 declaration
+buys nothing even where the interface still builds: the audio service lists
+2.2/2.1/2.0 as optional passthrough registrations and simply warns when they
+fail. Removing the claim does not remove a capability the framework was
+using.
+
+Whether A2DP offload still works is a runtime question for the first boot,
+not something this can settle. bonito's precedent, if it does not, is to move
+the Bluetooth audio HAL to AIDL rather than restore this entry.
+
+---
+ manifest.xml | 9 ---------
+ 1 file changed, 9 deletions(-)
+
+diff --git a/manifest.xml b/manifest.xml
+index daedfb9e..b1d91a84 100644
+--- a/manifest.xml
++++ b/manifest.xml
+@@ -26,15 +26,6 @@
+             <instance>default</instance>
+         </interface>
+     </hal>
+-    <hal format="hidl">
+-        <name>android.hardware.bluetooth.audio</name>
+-        <transport>hwbinder</transport>
+-        <version>2.1</version>
+-        <interface>
+-            <name>IBluetoothAudioProvidersFactory</name>
+-            <instance>default</instance>
+-        </interface>
+-    </hal>
+     <hal format="hidl">
+         <name>android.hardware.camera.provider</name>
+         <transport>hwbinder</transport>

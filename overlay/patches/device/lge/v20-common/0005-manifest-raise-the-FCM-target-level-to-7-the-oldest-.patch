@@ -14,7 +14,6 @@ has nothing to compare against and 7 is the most permissive level available.
 Raising it asserts compliance with a newer matrix than this hardware was
 designed against; check_vintf reports any HAL that assertion gets wrong, so
 the claim is checked rather than assumed.
-
 ---
  manifest.xml | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

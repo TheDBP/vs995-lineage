@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 08:38:36 -0400
+Subject: [PATCH] msm8996-common: drop the stale LiveDisplay HIDL manifest
+ entry
+
+Left behind when LiveDisplay moved to vendor.lineage.livedisplay-service.sdm,
+which ships its own VINTF fragment. At FCM 5 nothing checked it; at 7
+check_vintf does:
+
+  The following instances are in the device manifest but not specified in
+  framework compatibility matrix:
+    vendor.lineage.livedisplay@2.0::IPictureAdjustment/default
+
+Nothing serves the HIDL interface any more, so the declaration was a claim
+the image could not honour.
+
+---
+ manifest.xml | 9 ---------
+ 1 file changed, 9 deletions(-)
+
+diff --git a/manifest.xml b/manifest.xml
+index 39eb1d4e..daedfb9e 100644
+--- a/manifest.xml
++++ b/manifest.xml
+@@ -358,13 +358,4 @@
+             <instance>com.qualcomm.qti.uceservice</instance>
+         </interface>
+     </hal>
+-    <hal format="hidl">
+-        <name>vendor.lineage.livedisplay</name>
+-        <transport>hwbinder</transport>
+-        <version>2.0</version>
+-        <interface>
+-            <name>IPictureAdjustment</name>
+-            <instance>default</instance>
+-        </interface>
+-    </hal>
+ </manifest>
