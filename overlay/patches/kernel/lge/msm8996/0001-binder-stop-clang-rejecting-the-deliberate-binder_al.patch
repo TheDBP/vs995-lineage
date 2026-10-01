@@ -22,7 +22,6 @@ GCC accepted that and it is what 22.2 ships.
 So suppress rather than correct: rewriting the function to upstream LRU
 form would restore the path that revert deliberately removed, and IR is why
 it was removed. CFLAGS_binder_alloc.o keeps the diagnostic everywhere else.
-
 ---
  drivers/android/Makefile | 11 +++++++++++
  1 file changed, 11 insertions(+)

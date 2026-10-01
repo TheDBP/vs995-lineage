@@ -12,7 +12,6 @@ these are shell scripts, so it rejects each one:
 LOCAL_CHECK_ELF_FILES := false on exactly the script modules. Changing the
 class instead would move them out of /vendor/bin, where the init rc files
 expect to exec them.
-
 ---
  rootdir/Android.mk | 4 ++++
  1 file changed, 4 insertions(+)

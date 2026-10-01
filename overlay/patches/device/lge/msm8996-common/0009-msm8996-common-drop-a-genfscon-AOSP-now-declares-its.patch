@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 05:43:18 -0400
+Subject: [PATCH] msm8996-common: drop a genfscon AOSP now declares itself
+
+  genfs_contexts:1:ERROR 'duplicate entry for genfs entry
+  (proc, /sys/vm/dirty_writeback_centisecs)'
+
+system/sepolicy/private/genfs_contexts:88 labels it u:object_r:proc_dirty:s0,
+which is exactly what this line said, so the device copy is now redundant
+rather than wrong and the label does not change.
+
+Swept the rest of the device's genfs_contexts against everything else in the
+compiled policy set rather than waiting for checkpolicy to report the next
+one: this was the only collision.
+
+---
+ sepolicy/vendor/genfs_contexts | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/sepolicy/vendor/genfs_contexts b/sepolicy/vendor/genfs_contexts
+index 22022429..e45ec891 100644
+--- a/sepolicy/vendor/genfs_contexts
++++ b/sepolicy/vendor/genfs_contexts
+@@ -45,4 +45,3 @@ genfscon sysfs /devices/soc/400f000.qcom,spmi/spmi-0/spmi0-03/400f000.qcom,spmi:
+ genfscon sysfs /devices/soc/74a4900.sdhci/leds                                                                                    u:object_r:sysfs_leds:s0
+ 
+ # ProcFS
+-genfscon proc /sys/vm/dirty_writeback_centisecs                     u:object_r:proc_dirty:s0

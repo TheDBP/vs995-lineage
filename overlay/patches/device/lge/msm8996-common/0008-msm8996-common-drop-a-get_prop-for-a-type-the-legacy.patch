@@ -18,7 +18,6 @@ Checked the rest rather than waiting for checkpolicy to report them one
 build at a time: it names only the first. Of the 123 property types
 flags_health_check.te references this was the only undefined one, and it is
 the only one across all three device policy dirs.
-
 ---
  sepolicy/vendor/flags_health_check.te | 1 -
  1 file changed, 1 deletion(-)

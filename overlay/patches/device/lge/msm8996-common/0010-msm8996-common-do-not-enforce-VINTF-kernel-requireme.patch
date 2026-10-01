@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 05:43:33 -0400
+Subject: [PATCH] msm8996-common: do not enforce VINTF kernel requirements
+
+24.0's framework compatibility matrix declares a minimum LTS of 4.14.336 and
+has no entry for 4.4 at all, so check_vintf fails outright:
+
+  ERROR: files are incompatible: Runtime info and framework compatibility
+  matrix are incompatible: No kernel entry found for kernel version 4.4 at
+  kernel FCM version 5.
+
+4.4.302 is the newest kernel this SoC has; there is no configuration of the
+device that satisfies the matrix. Same call bonito made for the same reason.
+
+This disables an assertion, not a feature: the running system is unchanged,
+and the honest reading is that VINTF kernel guarantees are unverified here.
+It is the second platform floor this kernel sits below, the other being the
+eBPF loader's 4.9 map and program minimum.
+
+---
+ msm8996.mk | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/msm8996.mk b/msm8996.mk
+index 6009ce7a..a4c82cf3 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -18,7 +18,13 @@
+ # Inherit proprietary blobs
+ $(call inherit-product, vendor/lge/msm8996-common/msm8996-common-vendor.mk)
+ 
+-PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := true
++# This SoC's newest kernel is 4.4, and 24.0's framework compatibility matrix has no entry below
++# 4.14.336, so the VINTF kernel check cannot pass by any configuration of this device:
++#   No kernel entry found for kernel version 4.4 at kernel FCM version 5.
++#   The following are available: Minimum LTS: 4.14.336, kernel FCM version: 7
++# The assertion is what is switched off, not a requirement: nothing about the running system
++# changes. Treat every VINTF kernel guarantee as unverified on this device.
++PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := false
+ 
+ # AAPT
+ PRODUCT_AAPT_CONFIG := normal
