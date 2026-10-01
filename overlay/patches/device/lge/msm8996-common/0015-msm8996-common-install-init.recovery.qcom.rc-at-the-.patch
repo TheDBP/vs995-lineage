@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 11:07:34 -0400
+Subject: [PATCH] msm8996-common: install init.recovery.qcom.rc at the ramdisk
+ root
+
+prebuilt_root without install_in_root installs to the partition subdir, so the
+file landed at /system/init.recovery.qcom.rc. The generic init.rc imports
+/init.recovery.${ro.hardware}.rc from the root, which is also where 22.2 had
+it, so it would never have been read and the symlink and sys.usb.configfs it
+sets would still have been missing.
+
+Caught by unpacking the built recovery ramdisk rather than trusting that the
+module installed somewhere useful.
+
+---
+ recovery/Android.bp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/recovery/Android.bp b/recovery/Android.bp
+index 54b2eb80..36437576 100644
+--- a/recovery/Android.bp
++++ b/recovery/Android.bp
+@@ -11,4 +11,8 @@ prebuilt_root {
+     name: "init.recovery.qcom.rc",
+     src: "root/init.recovery.qcom.rc",
+     recovery: true,
++    // Without this it lands in the partition subdir, i.e. /system/init.recovery.qcom.rc, and the
++    // generic init.rc imports /init.recovery.${ro.hardware}.rc from the ramdisk root, so it would
++    // never be read. Same pair bootable/recovery/fonts uses.
++    install_in_root: true,
+ }

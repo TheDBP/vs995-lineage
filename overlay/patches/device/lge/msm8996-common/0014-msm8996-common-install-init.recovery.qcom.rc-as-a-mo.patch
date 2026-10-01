@@ -16,7 +16,6 @@ therefore adb sideload.
 
 prebuilt_root with recovery: true puts it back at the ramdisk root. Checked
 recovery/root for anything else: that one file is all of it.
-
 ---
  BoardConfigCommon.mk |  2 ++
  msm8996.mk           |  7 +++++++

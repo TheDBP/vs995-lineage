@@ -30,7 +30,6 @@ dup_mmap skips copy_page_range for a VM_WIPEONFORK range so the child faults
 in zeroes. retval is 0 there -- the only earlier assignment is
 vma_dup_policy(), which branches away on error -- so skipping the copy cannot
 propagate a stale error.
-
 ---
  include/linux/mm.h                     |  1 +
  include/uapi/asm-generic/mman-common.h |  3 +++
