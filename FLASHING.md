@@ -54,6 +54,62 @@ is gone and dockerd could have `name_to_handle_at()` again. Not flipped yet -- i
 change and belongs in its own flash. Everything else in the container set is on (`PID_NS`, `IPC_NS`,
 `CFS_BANDWIDTH`, cgroup noprefix patch).
 
+## Getting into recovery, and the boot loop that follows a bad one
+
+**`fastboot reboot recovery` and `adb reboot recovery` are silently dropped on this device.** They
+answer OKAY, the phone boots normally, and `ro.boot.bootreason` reads `bootloader`. The only
+mechanism that works is writing the request into the BCB and doing a NORMAL reboot:
+
+```sh
+adb root
+adb shell 'printf "boot-recovery" | dd of=/dev/block/bootdevice/by-name/misc bs=1 seek=0 conv=notrunc'
+adb reboot
+```
+
+**A recovery image that does not boot, plus a BCB that still says boot-recovery, is a loop the phone
+cannot leave.** Every power-on retries recovery, fails, reboots, and spends charge without ever
+reaching Android to clear the flag; it will flatten the battery and then be too weak to hold any
+mode. Always clear the flag after a failed attempt, from fastboot:
+
+```sh
+fastboot erase misc        # 0.13s, ends the loop
+```
+
+To break in when it is already looping: the battery is removable, so pull it, connect USB to the
+host, hold **Volume Down**, and insert the battery while still holding -- the key is read before the
+BCB, so it lands in fastboot without attempting a boot. Have something already polling for the
+device (`.scratch/vs995-rescue.sh` does this several times a second); a weak cell may only hold
+fastboot for a second. If the cell is flat, charge it out of the phone -- it is a BL-44E1F and a
+universal charger does it. A looping phone draws more than it takes in, so charging in place does
+not work.
+
+## The recovery image has a size ceiling the partition does not explain
+
+The recovery partition is 42,467,328 bytes, but the bootloader will not boot a recovery image much
+over **28 MiB (29,360,128)**. Measured:
+
+| image | bytes | result |
+|---|---|---|
+| 24.0 kernel + 22.2 ramdisk | 28,942,336 | boots |
+| 22.2 recovery (stock) | 28,958,720 | boots |
+| 24.0 recovery | 29,671,424 | does not boot, no kernel console |
+| 22.2 kernel + 24.0 ramdisk | 29,687,808 | does not boot |
+
+A rejected image leaves no ramoops record at all, which is how you tell it apart from a kernel that
+booted and panicked. AOSP has the same class of problem and solves it the same way: see the
+`rm -f .../fastbootd` block in `build/make/core/Makefile`, commented "to fit in 32MB".
+
+Trimming that works, in order of safety: `system/bin/fastbootd` (1.4 MB, useless here -- no dynamic
+partitions) and `res/images/*_text.png` (~800 KB of localized UI text; already-compressed PNGs, so
+they give up nearly their full size). Keep `font.png`, `font_menu.png` and the loop frames.
+
+## Recovery adb: 22.2 strands, 24.0 does not
+
+22.2 recovery ships `ro.adb.secure=1`, so its adb comes up `unauthorized` and accepts no commands at
+all -- not even `reboot`. Booting it without someone at the screen means a power cycle. The 24.0
+recovery built with the `bringup` option has `ro.adb.secure=0`, `ro.debuggable=1` and
+`persist.sys.usb.config=adb`, so it is drivable.
+
 ## Unverified on 24.0
 
 Nothing below has run on hardware. `verify-vs995.sh` checks each one and fails loudly rather than
