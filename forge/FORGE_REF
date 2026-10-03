@@ -4,4 +4,4 @@ url=https://github.com/TheDBP/rom-forge.git
 ref=main
 commit=61f0dd53ff046c80427d929b88f34ecdde8022dc
 subject=bootstrap: export SOONG_MEM_LIMIT and record it in the banner
-synced=2026-09-30T21:59:54Z
+synced=2026-10-03T17:39:07Z
