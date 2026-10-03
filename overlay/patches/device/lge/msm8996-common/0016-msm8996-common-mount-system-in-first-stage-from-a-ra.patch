@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 11:53:19 -0400
+Subject: [PATCH] msm8996-common: mount /system in first stage from a ramdisk
+ fstab
+
+Android 17 removed device-tree fstab support from libfstab, so the
+firmware/android/fstab node that mounted /system before switch_root is
+ignored. First-stage init finds no fstab, exits, and the kernel panics on
+"Attempted to kill init" -- a continuous loop after the LG logo.
+
+Copy fstab.qcom into the boot ramdisk, mark /system first_stage_mount, and
+address it through /dev/block/by-name, which first stage creates from
+androidboot.boot_devices; /dev/block/bootdevice is a second-stage symlink.
+
+---
+ msm8996.mk             | 4 ++++
+ rootdir/etc/fstab.qcom | 6 +++++-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/msm8996.mk b/msm8996.mk
+index ae51a068..7f54d01d 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -134,6 +134,10 @@ PRODUCT_PACKAGES += \
+     init.target.rc \
+     ueventd.qcom.rc
+ 
++# First-stage init mounts /system from this; the kernel DT fstab is no longer read
++PRODUCT_COPY_FILES += \
++    $(LOCAL_PATH)/rootdir/etc/fstab.qcom:$(TARGET_COPY_OUT_RAMDISK)/fstab.qcom
++
+ # Display
+ PRODUCT_PACKAGES += \
+     android.hardware.graphics.allocator@2.0-impl \
+diff --git a/rootdir/etc/fstab.qcom b/rootdir/etc/fstab.qcom
+index 1ed9266e..fd597426 100644
+--- a/rootdir/etc/fstab.qcom
++++ b/rootdir/etc/fstab.qcom
+@@ -5,10 +5,14 @@
+ #TODO: Add 'check' as fs_mgr_flags with data partition.
+ # Currently we dont have e2fsck compiled. So fs check would failed.
+ 
++# /system is mounted by first-stage init from the copy of this file in the boot ramdisk (Android 17
++# no longer reads the device-tree fstab). /dev/block/bootdevice does not exist yet at that point;
++# /dev/block/by-name does, from androidboot.boot_devices.
++
+ #<src>                                                <mnt_point>       <type>  <mnt_flags and options>                                                   <fs_mgr_flags>
+ /dev/block/bootdevice/by-name/boot                    /boot             emmc    defaults                                                                  defaults
+ /dev/block/bootdevice/by-name/recovery                /recovery         emmc    defaults                                                                  defaults
+-/dev/block/bootdevice/by-name/system                  /system           ext4    ro,barrier=1,noatime                                                      wait,recoveryonly
++/dev/block/by-name/system                             /system           ext4    ro,barrier=1,noatime                                                      wait,recoveryonly,first_stage_mount
+ /dev/block/bootdevice/by-name/cache                   /cache            ext4    discard,nosuid,nodev,barrier=1,noatime,noauto_da_alloc,errors=continue    wait,check
+ /dev/block/bootdevice/by-name/userdata                /data             ext4    discard,nosuid,nodev,barrier=1,noatime,noauto_da_alloc,errors=continue    wait,check
+ /dev/block/bootdevice/by-name/persist                 /persist          ext4    nosuid,nodev,barrier=1,noatime,noauto_da_alloc,errors=continue            wait,notrim

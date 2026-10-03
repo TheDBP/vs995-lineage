@@ -12,7 +12,6 @@ sets would still have been missing.
 
 Caught by unpacking the built recovery ramdisk rather than trusting that the
 module installed somewhere useful.
-
 ---
  recovery/Android.bp | 4 ++++
  1 file changed, 4 insertions(+)

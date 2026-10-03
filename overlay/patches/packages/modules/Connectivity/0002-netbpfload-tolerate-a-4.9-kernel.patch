@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 09:49:06 -0400
+Subject: [PATCH] netbpfload: tolerate a 4.9 kernel
+
+NetBpfLoad on Android 17 returns before loading anything on a kernel
+below 5.10: the U/V/25Q2/25Q4 floors are hard returns (22.2 only
+warned), the bpf_jit_kallsyms write is no longer gated on the sysctl
+existing (4.11+), and the root-only bpfGetNext{Prog,Map}Id sanity check
+issues commands a 4.9 kernel does not have (4.13+). netd.o also creates
+two LRU_HASH maps (4.10+) unconditionally; the only programs that
+reference them are 5.10+ and are already skipped by kernel version.
+
+Floors back to warnings, gate the kallsyms write and the id check on the
+kernel that introduced them, and let isMapTypeSupported skip LRU_HASH
+below 4.10 the way it skips LPM_TRIE below 4.14.
+---
+ bpf/loader/NetBpfLoad.cpp | 22 ++++++++++++----------
+ 1 file changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index 7ba3247dcc..ddfff7b97f 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -739,6 +739,10 @@ static bool isMapTypeSupported(enum bpf_map_type type) {
+         // On Linux Kernels older than 4.14 this map type doesn't exist - autoskip.
+         return false;
+     }
++    if (type == BPF_MAP_TYPE_LRU_HASH && !isAtLeastKernelVersion(4, 10)) {
++        // LRU_HASH arrived in 4.10; the only programs that use one are 5.10+.
++        return false;
++    }
+     return true;
+ }
+ 
+@@ -1555,29 +1559,25 @@ static int doLoad(char** argv, char * const envp[]) {
+ 
+     // U bumps the kernel requirement up to 4.14
+     if (isAtLeastU && !isAtLeastKernelVersion(4, 14)) {
+-        ALOGE("Android U requires kernel 4.14.");
+-        return 4;
++        ALOGW("Android U requires kernel 4.14.");
+     }
+ 
+     // V bumps the kernel requirement up to 4.19
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel419
+     if (isAtLeastV && !isAtLeastKernelVersion(4, 19)) {
+-        ALOGE("Android V requires kernel 4.19.");
+-        return 5;
++        ALOGW("Android V requires kernel 4.19.");
+     }
+ 
+     // 25Q2 bumps the kernel requirement up to 5.4
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel54
+     if (isAtLeast25Q2 && !isAtLeastKernelVersion(5, 4)) {
+-        ALOGE("Android 25Q2 requires kernel 5.4.");
+-        return 6;
++        ALOGW("Android 25Q2 requires kernel 5.4.");
+     }
+ 
+     // 25Q4 bumps the kernel requirement up to 5.10
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel510
+     if (isAtLeast25Q4 && !isAtLeastKernelVersion(5, 10)) {
+-        ALOGE("Android 25Q4 requires kernel 5.10.");
+-        return 7;
++        ALOGW("Android 25Q4 requires kernel 5.10.");
+     }
+ 
+     // 26Q4 bumps the kernel requirement up to 5.15
+@@ -1759,7 +1759,9 @@ static int doLoad(char** argv, char * const envp[]) {
+         // Enable JIT kallsyms export for privileged users only
+         // (Note: this (open) will fail with ENOENT 'No such file or directory' if
+         //  kernel does not have CONFIG_HAVE_EBPF_JIT=y)
+-        if (!writeFile("/proc/sys/net/core/bpf_jit_kallsyms", "1\n")) return 25;
++        // (the sysctl itself only exists on 4.11+)
++        if (!writeFile("/proc/sys/net/core/bpf_jit_kallsyms", "1\n") &&
++            isAtLeastKernelVersion(4, 11)) return 25;
+     }
+ 
+     // Create all the pin subdirectories
+@@ -1779,7 +1781,7 @@ static int doLoad(char** argv, char * const envp[]) {
+         if (!createDir("/sys/fs/bpf/loader")) return 31;
+     }
+ 
+-    if (runningAsRoot) {  // implies U QPR3+ and kernel 4.14+
++    if (runningAsRoot && isAtLeastKernelVersion(4, 13)) {  // implies U QPR3+; GET_NEXT_ID is 4.13+
+         // There should not be any programs or maps yet
+         errno = 0;
+         uint32_t progId = bpfGetNextProgId(0);  // expect 0 with errno == ENOENT

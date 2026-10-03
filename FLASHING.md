@@ -83,32 +83,103 @@ fastboot for a second. If the cell is flat, charge it out of the phone -- it is 
 universal charger does it. A looping phone draws more than it takes in, so charging in place does
 not work.
 
-## The recovery image has a size ceiling the partition does not explain
+## Reading a failed boot: fastboot means init died, a loop means the kernel died
 
-The recovery partition is 42,467,328 bytes, but the bootloader will not boot a recovery image much
-over **28 MiB (29,360,128)**. Measured:
+Two outcomes, and they are not interchangeable:
 
-| image | bytes | result |
-|---|---|---|
-| 24.0 kernel + 22.2 ramdisk | 28,942,336 | boots |
-| 22.2 recovery (stock) | 28,958,720 | boots |
-| 24.0 recovery | 29,671,424 | does not boot, no kernel console |
-| 22.2 kernel + 24.0 ramdisk | 29,687,808 | does not boot |
+- **Back in fastboot by itself within ~60 s.** Android `init` chose it: `InitFatalReboot` (target
+  `androidboot.init_fatal_reboot_target`, default bootloader) or a service with
+  `reboot_on_failure reboot,bootloader,...` -- in Android 17 only `apexd-bootstrap` has that.
+  The kernel booted, the linker worked, init started. The fastboot session erases ramoops.
+- **Looping on the LG logo, never reaching USB.** The kernel panicked (an init that *exits* is
+  "Attempted to kill init" -- also a panic), or init asked for a plain reboot. The ramoops record
+  survives the warm reboot, but not a fastboot session or a key-combo reset.
 
-A rejected image leaves no ramoops record at all, which is how you tell it apart from a kernel that
-booted and panicked. AOSP has the same class of problem and solves it the same way: see the
-`rm -f .../fastbootd` block in `build/make/core/Makefile`, commented "to fit in 32MB".
+There is **no size ceiling**: a 30 MB boot image boots. An image that "fails silently" is failing
+for the reasons below.
 
-Trimming that works, in order of safety: `system/bin/fastbootd` (1.4 MB, useless here -- no dynamic
-partitions) and `res/images/*_text.png` (~800 KB of localized UI text; already-compressed PNGs, so
-they give up nearly their full size). Keep `font.png`, `font_menu.png` and the loop frames.
+### Getting the console out of a loop
 
-## Recovery adb: 22.2 strands, 24.0 does not
+`reboot recovery` and a `boot-recovery` BCB in `misc` are both honoured by this bootloader. The
+loop never gets to either on its own, so wrap the real first-stage init: a boot image whose ramdisk
+is the recovery ramdisk (it has `toybox` and a shell) plus the 24.0 `init` as `/init.boot` and a
+`/wrap.sh` run via `rdinit=/wrap.sh`. The script mounts `pstore`, copies the previous iteration's
+`console-ramoops-0` into `misc` at 16 MiB (32 MiB partition; the bootloader and recovery only use
+the first few KiB, and recovery zeroes the BCB on start), arms the BCB once it has saved something,
+removes `/system/bin/recovery` so init takes the normal path, and `exec`s `/init.boot`. The loop runs
+twice and lands in recovery; read misc with
+`dd if=/dev/block/sda5 bs=4096 skip=4096 count=512 | tr -d '\000'`.
+A *hang* (no reboot) leaves nothing in ramoops after the forced power-off, so the wrapper also forks
+a watchdog before exec'ing init: under `toybox unshare -m`, a tmpfs chroot holding `toybox`, the
+`misc`/`kmsg` nodes and `/proc`; after 150 s it writes `dmesg` to misc at 16 MiB, arms the BCB and
+`echo b > /proc/sysrq-trigger`. It must be invisible to init: `FreeRamdisk` deletes the rootfs
+after `switch_root`, and `SwitchRoot` MS_MOVEs every mount it can see and `PLOG(FATAL)`s when one
+cannot land on the read-only system (`mkdir /system/diag` fails -> fastboot). Hand off with a
+`/diag-ready` marker so the mounts are already private before init starts.
+Traps, each of which cost a flash: PID 1 starts with fds 0-2 closed and no `/proc` -- the ramdisk
+needs `dev/{console,null,kmsg,misc}` nodes, the script needs `exec 0</dev/null 1>/dev/kmsg 2>&1`,
+and bionic cannot find a binary by bare name without `/proc/self/exe`, so mount `/proc` and call
+`/system/bin/toybox` by absolute path. `fakeroot` state dies with its session: `mknod` and `cpio`
+must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
+`/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-22.2 recovery ships `ro.adb.secure=1`, so its adb comes up `unauthorized` and accepts no commands at
-all -- not even `reboot`. Booting it without someone at the screen means a power cycle. The 24.0
-recovery built with the `bringup` option has `ro.adb.secure=0`, `ro.debuggable=1` and
-`persist.sys.usb.config=adb`, so it is drivable.
+### The five things that stopped 24.0 booting on this kernel
+
+1. **SELinux policy does not load.** Android 16+ policy carries netlink-message xperms rules
+   (`AVTAB_XPERMS_NLMSG`, specified=3); the 4.4 avtab parser's "Android M compatibility" heuristic
+   takes any unknown xperms type as a pre-xperms policy, switches format, and desyncs
+   (`SELinux: avtab: invalid type or class`). init reboots to the bootloader; recovery and system
+   both die here. Kernel patch "selinux: accept netlink xperms rules". Test a policy against a
+   running kernel with ONE write -- `cat` chunks and the first chunk alone reads as
+   "ebitmap: truncated map":
+   `adb shell 'dd if=/tmp/sepolicy of=/sys/fs/selinux/load bs=$(stat -c %s /tmp/sepolicy) count=1'`
+2. **No first-stage fstab.** Android 17 removed device-tree fstab support from libfstab
+   (`system/fs/fs_mgr` b474d16b), so `firmware/android/fstab/system` in the DT is ignored; first
+   stage finds no fstab, exits, kernel panics, continuous loop. Fix: `fstab.qcom` copied into the
+   boot ramdisk with `/system` marked `first_stage_mount` and addressed as
+   `/dev/block/by-name/system` -- `/dev/block/bootdevice` is a second-stage symlink.
+3. **cgroup setup fails.** Android 17 mounts cpuset with `cpuset_v2_mode` (Linux 4.15+); this
+   kernel returns ENOENT for the unknown token, `SetupCgroups` aborts, no service can get a process
+   group, `apexd-bootstrap` fails and its `reboot_on_failure` lands in fastboot. Kernel patch
+   "cgroup: accept the cpuset_v2_mode mount option".
+4. **vold cannot link.** `msm8996.mk` copied the VNDK v32 `libhardware_legacy.so` over the system
+   one; it NEEDs `android.system.suspend@1.0.so`, gone in 17. Every system binary linking it fails
+   (vold, audioserver, dumpstate, libandroid_runtime, libandroid_servers); vold's
+   `reboot_on_failure` gives a `reboot,vold-failed` loop. A bionic link failure is `_exit(1)` with
+   the message on stderr only -- the console shows just "exited with status 1", even for a daemon
+   that logs to kmsg. Find it from recovery: mount system ro, bind `/dev`, mount `proc`/`sysfs`,
+   tmpfs on `<root>/linkerconfig`, then
+   `chroot <root> /system/bin/bootstrap/linker64 /system/bin/vold --help` prints the
+   `CANNOT LINK EXECUTABLE ... library X not found` line (`/system/bin/linker64` is a symlink into
+   the runtime APEX, dead in a chroot; a missing `libandroidicu.so` is the i18n APEX, not a bug).
+   Device patch "stop overriding libhardware_legacy with the VNDK v32 prebuilt".
+5. **netbpfload refuses the kernel.** `Android S & T require kernel 4.9.` -> exit 3 ->
+   `reboot,bpfloader-failed` loop. The 4.4 kernel's bpf UAPI is the same Android backport
+   msm-4.9 carries (identical helper/program/map/attach lists), so the device sets
+   `ro.bpf.kver_override=4.9.0` -- read only by netbpfload, netd and the platform bpfloader --
+   and takes bonito's Connectivity and system/bpf series for a 4.9 kernel unchanged.
+
+Not yet hit but certain on this kernel, from the same bonito series: `filterPowerSupplyEvents.o`
+needs a bounded-loop verifier (5.3; `hardware/interfaces` libhealthloop patch) and `gpuMem.bpf`
+needs the `gpu_mem_total` tracepoint, which this kernel lacks (`system/memory/libmeminfo` patch;
+otherwise `BpfMapRO` aborts system_server). Both show up only after netd is up, with adb alive.
+
+Sandbox a candidate `init` on the running recovery before flashing: copy it to a tmpfs, bind-mount
+an empty file over `/system/bin/init` so second stage cannot exec, mount selinuxfs under the chroot,
+and run `toybox unshare -f -p -m chroot <root> /mnt/init selinux_setup`. In a child PID namespace
+its `reboot()` only kills the sandbox. It runs the whole `selinux_setup` stage (policy load,
+enforcing, restorecon) and sets the live kernel enforcing -- `setenforce 0` afterwards.
+
+## Recovery adb: use Enable ADB in the menu
+
+22.2 recovery ships `ro.adb.secure=1`, so adb is `unauthorized` until someone selects
+**Advanced -> Enable ADB** on the screen; after that it is a root shell. Booting it without someone
+at the phone means a power cycle. The 24.0 recovery built with the `bringup` option has
+`ro.adb.secure=0`, `ro.debuggable=1` and `persist.sys.usb.config=adb`, so it is drivable unattended.
+
+Do not `fastboot erase userdata` or `erase cache` on this device: the fstab has no `formattable`
+flag, init cannot mount `/data`, and every boot goes to recovery -- which looks exactly like a ROM
+that does not boot. Wipe from the recovery menu.
 
 ## Unverified on 24.0
 

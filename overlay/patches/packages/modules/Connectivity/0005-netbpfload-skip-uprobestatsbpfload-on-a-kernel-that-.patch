@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 15:05:12 -0400
+Subject: [PATCH] netbpfload: skip uprobestatsbpfload on a kernel that cannot
+ run it
+
+netbpfload does not set bpf.progs_loaded itself. It execs
+uprobestatsbpfload, which execs the platform bpfloader, which re-execs
+netbpfload with "done", and only that last step sets the property.
+
+On 4.9 the chain dies at the first link: uprobestatsbpfload takes SIGABRT
+within 150 ms ("Service 'bpfloader' (pid 1581) received SIGABRT waiting
+took 0.149000 seconds"), and init cannot even parse its .rc --
+"capability 'PERFMON' not supported by the kernel", CAP_PERFMON being
+5.8+.
+
+bpf.progs_loaded then never appears, and bpf::waitForProgsLoaded() loops
+forever. Two callers matter. netd is one. The other is
+HealthLoop::UeventInit(), which calls it before attaching the uevent BPF
+filter: the health HAL registers with servicemanager in Init(), then
+blocks in UeventInit() and never reaches MainLoop(), so it never polls
+binder. BatteryService.onStart() calls IHealth.registerCallback() on
+system_server's main thread, that transaction is never serviced, and the
+watchdog kills system_server at 66s -- a boot loop whose only symptom is
+"Blocked in handler on main thread".
+
+Skip only the link that cannot run and fall through to the platform
+bpfloader, which has no hard kernel floor of its own and skips what it
+cannot use. That keeps both halves of what the chain was for: the
+platform programs under /system/etc/bpf get loaded -- gpuMem among them,
+without which libmeminfo's BpfMapRO::abortOnMismatch() aborts
+system_server from MemInfoReader.getGpuKernelUsedSizeKb() -- and the
+platform loader re-execs us with "done" to set the property.
+---
+ bpf/loader/NetBpfLoad.cpp | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index ddfff7b97f..af9ce76875 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -1874,8 +1874,20 @@ static int doLoad(char** argv, char * const envp[]) {
+         return 0;
+     }
+ 
++    // lineage-24.0: skip uprobestatsbpfload on a kernel that cannot run it, but keep the rest of
++    // the chain. It SIGABRTs within 150 ms here ("Service 'bpfloader' (pid 1581) received SIGABRT
++    // waiting took 0.149000 seconds") and init cannot even parse its .rc -- "capability 'PERFMON'
++    // not supported by the kernel", CAP_PERFMON being 5.8+. Losing the chain matters because its
++    // last link, netbpfload "done", is the only thing that sets bpf.progs_loaded, and every
++    // bpf::waitForProgsLoaded() caller then blocks forever: netd, and HealthLoop::UeventInit(),
++    // which wedges the health HAL before it polls binder, so BatteryService hangs in
++    // registerCallback and the watchdog kills system_server at 66s.
++    //
++    // Falling through to the platform bpfloader keeps both halves: it loads /system/etc/bpf (gpuMem
++    // among them, which libmeminfo's BpfMapRO aborts system_server without) and re-execs us with
++    // "done". It has no hard kernel floor of its own; like this loader it skips what it cannot use.
+     // unreachable before U QPR3
+-    if (exists(uprobestatsBpfLoader)) {
++    if (exists(uprobestatsBpfLoader) && isAtLeastKernelVersion(5, 8)) {
+       ALOGI("done, transferring control to uprobestatsbpfload.");
+       const char *args[] = {
+           uprobestatsBpfLoader,

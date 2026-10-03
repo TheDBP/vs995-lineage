@@ -1,0 +1,255 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 15:05:12 -0400
+Subject: [PATCH] Run without local network access when its BPF maps cannot be
+ pinned
+
+Local network access needs map types and features this kernel does not
+have: local_net_access_map and local_net_uid_host_allowlist_map are
+LPM_TRIE (kernel 4.11+), and the note-op and loopback ringbufs need BPF
+ringbuf support (5.8). netbpfload on 4.9 logs
+
+  skipping unsupported map type(11): local_net_access_map
+  skipping map local_net_note_op_ringbuf: kernel version ... [0x50a0000,
+  skipping map loopback_access_ringbuf:  kernel version ... [0x50a0000,
+
+and never pins them. Three callers then take system_server down on every
+boot, and zygote with it, until init gives up with "critical process
+'zygote' exited 4 times before boot completed" and reboots:
+
+  BpfNetMaps.initBpfMaps() -> "Cannot open local_net_access map",
+  ENOENT, thrown through NetworkStatsServiceInitializer;
+
+  LocalNetEventListener.<init> -> nativeGetLocalNetAccessRingbufFd ->
+  LocalNetEventHandler::GetRingbuf(), which aborts natively; and
+
+  ConnectivityService.systemReadyInternal ->
+  LoopbackEventHandler::Start() -> GetPoller(), likewise.
+
+Nothing enforces local network access on this kernel in any case. The
+programs that read these maps are gated far above 4.9 and netbpfload
+skips them too -- which is why netd.o still loads clean rather than
+failing on a missing map. The feature is already absent; only the
+assumption that the maps exist is new.
+
+Probe each pin path once at class load, one flag per feature rather than
+one for all three, since the map and the two ringbufs have different
+kernel floors. When a path is missing, skip the init block that needs
+it, make the ten public entry points no-op or answer permissively
+(matching their documented "absent means allowed" behaviour), leave
+mLocalNetEventListener null -- which ConnectivityService already
+supports -- and skip the loopback event consumer. Revisit if LPM_TRIE
+and BPF ringbufs are ever backported.
+---
+ .../src/com/android/server/BpfNetMaps.java    | 89 ++++++++++++++++++-
+ .../android/server/ConnectivityService.java   | 13 ++-
+ 2 files changed, 99 insertions(+), 3 deletions(-)
+
+diff --git a/service/src/com/android/server/BpfNetMaps.java b/service/src/com/android/server/BpfNetMaps.java
+index c1a47997af..c7f95be5a7 100644
+--- a/service/src/com/android/server/BpfNetMaps.java
++++ b/service/src/com/android/server/BpfNetMaps.java
+@@ -217,6 +217,40 @@ public class BpfNetMaps {
+     private static IBpfMap<LocalNetUidHostAllowlistKey, Bool> sLocalNetUidHostAllowlistMap = null;
+     @GuardedBy("sLocalNetAccessLock")
+     private static IBpfMap<U32, S64> sLocalNetCacheGenerationIdMap = null;
++    // lineage-24.0: local_net_access_map and local_net_uid_host_allowlist_map are LPM_TRIE, a map
++    // type the kernel gained in 4.11, and the local net ringbufs need 5.8. On the 4.9 kernel this
++    // device ships netbpfload skips all of them, so probe once at class load and run without the
++    // feature. See initBpfMaps() and ConnectivityService's LocalNetEventListener.
++    private static final boolean sLocalNetAccessSupported =
++            new File(LOCAL_NET_ACCESS_MAP_PATH).exists();
++
++    // lineage-24.0: the event ringbufs need BPF ringbuf support, which the kernel gained in 5.8.
++    // These mirror LOCAL_NET_NOTE_OP_RINGBUF_PATH and LOOPBACK_ACCESS_RINGBUF_NETD_PATH in
++    // bpf/progs/netd.h, which have no Java counterpart in BpfNetMapsConstants.
++    private static final String LOCAL_NET_NOTE_OP_RINGBUF_PATH =
++            "/sys/fs/bpf/netd_shared/map_netd_local_net_note_op_ringbuf";
++    private static final String LOOPBACK_ACCESS_RINGBUF_PATH =
++            "/sys/fs/bpf/netd_shared/map_netd_loopback_access_ringbuf";
++
++    private static final boolean sLocalNetEventPollingSupported =
++            new File(LOCAL_NET_NOTE_OP_RINGBUF_PATH).exists();
++    private static final boolean sLoopbackEventPollingSupported =
++            new File(LOOPBACK_ACCESS_RINGBUF_PATH).exists();
++
++    /** lineage-24.0: false when the local network access BPF maps could not be pinned. */
++    public static boolean isLocalNetAccessSupported() {
++        return sLocalNetAccessSupported;
++    }
++
++    /** lineage-24.0: false when the local net note-op ringbuf could not be pinned. */
++    public static boolean isLocalNetEventPollingSupported() {
++        return sLocalNetEventPollingSupported;
++    }
++
++    /** lineage-24.0: false when the loopback access ringbuf could not be pinned. */
++    public static boolean isLoopbackEventPollingSupported() {
++        return sLoopbackEventPollingSupported;
++    }
+     private static BpfBoolean sL4sEnabledMap = null;
+     private static BpfBoolean sLoopbackAccessMetricsEnabledBpfBoolean = null;
+     private static BpfBoolean sLoopbackChecksEnabledBpfBoolean = null;
+@@ -668,7 +702,20 @@ public class BpfNetMaps {
+             throw new IllegalStateException("Failed to initialize ingress discard map", e);
+         }
+ 
+-        if (isAtLeastB()) {
++        // lineage-24.0: local_net_access_map and local_net_uid_host_allowlist_map are LPM_TRIE,
++        // a map type the kernel gained in 4.11. On the 4.9 kernel this device ships netbpfload
++        // logs "skipping unsupported map type(11)" and never pins them, so getLocalNetAccessMap()
++        // throws ENOENT and NetworkStatsServiceInitializer takes system_server down -- zygote with
++        // it, four times, and then init reboots. Nothing enforces local network access on this
++        // kernel in any case: the programs that read these maps are gated far above 4.9 and are
++        // skipped too, which is why netd.o still loads clean. Run without the feature rather than
++        // without a boot.
++        if (isAtLeastB() && !sLocalNetAccessSupported) {
++            Log.w(TAG, "local network access maps are not pinned (kernel has no LPM_TRIE);"
++                    + " local network access enforcement is unavailable");
++        }
++
++        if (isAtLeastB() && sLocalNetAccessSupported) {
+             synchronized (sLocalNetAccessLock) {
+                 if (sLocalNetAccessMap == null) {
+                     sLocalNetAccessMap = getLocalNetAccessMap();
+@@ -1762,6 +1809,10 @@ public class BpfNetMaps {
+             final InetAddress address, final int protocol, final int remotePort,
+             final boolean isAllowed) {
+         throwIfPre25Q2("addLocalNetAccess is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         if (iface == null) {
+             Log.e(TAG, "Null iface, skip addLocalNetAccess for " + address);
+             return;
+@@ -1798,6 +1849,10 @@ public class BpfNetMaps {
+     public void removeLocalNetAccess(final int lpmBitlen, @Nullable final String iface,
+             final InetAddress address, final int protocol, final int remotePort) {
+         throwIfPre25Q2("removeLocalNetAccess is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         final int ifIndex;
+         if (iface == null) {
+             ifIndex = 0;
+@@ -1838,6 +1893,10 @@ public class BpfNetMaps {
+     public boolean getLocalNetAccess(final int lpmBitlen, @Nullable final String iface,
+             final InetAddress address, final int protocol, final int remotePort) {
+         throwIfPre25Q2("getLocalNetAccess is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return true;
++        }
+         final int ifIndex;
+         if (iface == null) {
+             ifIndex = 0;
+@@ -1902,6 +1961,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.CUR_DEVELOPMENT)
+     public void addUidToLocalNetBlockMap(final int uid) {
+         throwIfPre25Q2("addUidToLocalNetBlockMap is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         try {
+             sLocalNetBlockedUidMap.updateEntry(new U32(uid), new Bool(true));
+         } catch (ErrnoException e) {
+@@ -1916,6 +1979,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.CUR_DEVELOPMENT)
+     public boolean isUidBlockedFromUsingLocalNetwork(final int uid) {
+         throwIfPre25Q2("isUidBlockedFromUsingLocalNetwork is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return false;
++        }
+         try {
+             final Bool value = sLocalNetBlockedUidMap.getValue(new U32(uid));
+             return value == null ? false : value.val;
+@@ -1933,6 +2000,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.CUR_DEVELOPMENT)
+     public void removeUidFromLocalNetBlockMap(final int uid) {
+         throwIfPre25Q2("removeUidFromLocalNetBlockMap is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         try {
+             sLocalNetBlockedUidMap.deleteEntry(new U32(uid));
+         } catch (ErrnoException e) {
+@@ -1946,6 +2017,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+     public void addLocalNetUidAccess(final int uid, @NonNull final String iface) {
+         throwIfPre25Q2("addLocalNetUidAccess is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         int ifIndex = mInterfaceTracker.getInterfaceIndex(iface);
+         if (ifIndex == 0) {
+             Log.e(TAG, "Failed to get if index, skip addLocalNetUidAccess for uid: " + uid
+@@ -1967,6 +2042,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+     public void removeLocalNetUidAccess(final int uid, @NonNull final String iface) {
+         throwIfPre25Q2("removeLocalNetUidAccess is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         final int ifIndex = mInterfaceTracker.getInterfaceIndex(iface);
+         if (ifIndex == 0) {
+             Log.e(TAG, "Failed to get if index, skip removeLocalNetUidAccess for uid: " + uid
+@@ -1994,6 +2073,10 @@ public class BpfNetMaps {
+     public void addLocalNetUidHostAccess(final int uid, final int ifIndex,
+             @NonNull final InetAddress address) {
+         throwIfPre25Q2("addLocalNetUidHostAccess is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         final LocalNetUidHostAllowlistKey key = new LocalNetUidHostAllowlistKey(
+                 uid, ifIndex, address);
+         synchronized (sLocalNetAccessLock) {
+@@ -2009,6 +2092,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+     public void removeLocalNetHostAllowlistForInterface(final int ifIndex) {
+         throwIfPre25Q2("removeLocalNetHostAllowlistForInterface is not available on pre-B devices");
++        // lineage-24.0: no LPM_TRIE on this kernel, so the maps behind this are absent.
++        if (!sLocalNetAccessSupported) {
++            return;
++        }
+         synchronized (sLocalNetAccessLock) {
+             incrementLnpGenerationId(true);
+             try {
+diff --git a/service/src/com/android/server/ConnectivityService.java b/service/src/com/android/server/ConnectivityService.java
+index 7682d50826..75f1ed8c0b 100644
+--- a/service/src/com/android/server/ConnectivityService.java
++++ b/service/src/com/android/server/ConnectivityService.java
+@@ -2655,7 +2655,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
+                 ? mDeps.makeMultiProxyTracker(mContext, mHandler)
+                 : mDeps.makeProxyTracker(mContext, mHandler);
+ 
+-        if (mDeps.isAtLeastB()) {
++        // lineage-24.0: LocalNetEventListener's constructor reaches
++        // LocalNetEventHandler::GetRingbuf(), which aborts system_server when
++        // local_net_note_op_ringbuf is not pinned -- BPF ringbufs need kernel 5.8 and netbpfload
++        // skips them on 4.9. A null listener is already a supported state, so use it.
++        if (mDeps.isAtLeastB() && BpfNetMaps.isLocalNetAccessSupported()
++                && BpfNetMaps.isLocalNetEventPollingSupported()) {
+             mLocalNetEventListener = mDeps.getLocalNetEventListener(
+                     mContext,
+                     mHandler.getLooper(),
+@@ -5082,7 +5087,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
+             mSatisfiedByLocalNetworkMetrics.start();
+         }
+ 
+-        if (mBpfNetMaps.isLoopbackAccessMetricsEnabled()) {
++        // lineage-24.0: LoopbackEventHandler::Start() -> GetPoller() aborts system_server when
++        // loopback_access_ringbuf is not pinned; BPF ringbufs need kernel 5.8 and netbpfload skips
++        // them on 4.9. Skip the consumer rather than abort.
++        if (mBpfNetMaps.isLoopbackAccessMetricsEnabled()
++                && BpfNetMaps.isLoopbackEventPollingSupported()) {
+             BpfEventPoller.nativeInitLoopbackEventConsumer();
+         }
+ 

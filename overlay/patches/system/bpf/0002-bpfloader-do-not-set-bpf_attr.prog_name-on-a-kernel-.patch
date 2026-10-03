@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 16:32:50 -0400
+Subject: [PATCH] bpfloader: do not set bpf_attr.prog_name on a kernel older
+ than 4.15
+
+prog_name was added to bpf_attr in 4.15. On an older kernel the struct
+ends before it, and bpf_check_uarg_tail_zero() fails the syscall with
+E2BIG the moment a byte past the end is non-zero -- before the verifier
+runs, so log_buf comes back empty and the failure reads as nonsense:
+
+  BPF_PROG_LOAD call for /vendor/etc/bpf/filterPowerSupplyEvents.o
+      (skfilter_power_supply) returned fd: -1 (Argument list too long)
+  BPF_PROG_LOAD - BEGIN log_buf contents:
+
+  BPF_PROG_LOAD - END log_buf contents.
+
+filterPowerSupplyEvents.o is CRITICAL for healthd, so one unloadable
+program fails loadAllElfObjects(), and vendorBpfLoader() answers that
+with sleep(20) and exit(121) rather than its usual execve of netbpfload
+"done" -- the only step that sets bpf.progs_loaded. Every
+bpf::waitForProgsLoaded() caller then blocks forever; the log fills with
+
+  HealthLoop: Waited 60s for bpf.progs_loaded, still waiting...
+  GpuMem    : Waited 60s for bpf.progs_loaded, still waiting...
+  GpuWork   : Waited 60s for bpf.progs_loaded, still waiting...
+
+and the health HAL, stuck in UeventInit() and never polling binder,
+leaves BatteryService hanging in IHealth.registerCallback() until the
+watchdog kills system_server.
+
+netbpfload already gets this right for the mainline objects, which is
+why those load on the same kernel. prog_name is only a debug label in
+bpftool output, so skip it below 4.15 and let the program load.
+---
+ loader/Loader.cpp | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/loader/Loader.cpp b/loader/Loader.cpp
+index 08c6b6d..268530d 100644
+--- a/loader/Loader.cpp
++++ b/loader/Loader.cpp
+@@ -472,7 +472,21 @@ static bool loadCodeSections(const char* elfPath, vector<codeSection>& cs, const
+               .log_buf = ptr_to_u64(log_buf.data()),
+               .log_size = static_cast<__u32>(log_buf.size()),
+             };
+-            strlcpy(req.prog_name, cs[i].name.c_str(), sizeof(req.prog_name));
++            // lineage-24.0: bpf_attr gained prog_name in 4.15. An older kernel's bpf_attr ends
++            // before it, and bpf_check_uarg_tail_zero() rejects the call with E2BIG as soon as
++            // any byte past the end is non-zero -- before the verifier runs, so the log_buf comes
++            // back empty and the failure reads as nonsense ("Argument list too long" with no
++            // verifier output). That is fatal here: filterPowerSupplyEvents.o is marked CRITICAL
++            // for healthd, so loadAllElfObjects() fails, and vendorBpfLoader() answers that with
++            // sleep(20) and exit(121) instead of its usual execve of netbpfload "done" -- the one
++            // step that sets bpf.progs_loaded. Every bpf::waitForProgsLoaded() caller then blocks
++            // forever ("Waited 60s for bpf.progs_loaded, still waiting..." from HealthLoop,
++            // GpuMem and GpuWork), the health HAL never polls binder, and the watchdog kills
++            // system_server in IHealth.registerCallback(). Leave prog_name unset below 4.15; it
++            // is only a debug label in bpftool output.
++            if (kernelVer >= KVER(4, 15, 0)) {
++                strlcpy(req.prog_name, cs[i].name.c_str(), sizeof(req.prog_name));
++            }
+             fd.reset(bpf(BPF_PROG_LOAD, req));
+ 
+             if (!fd.ok()) {

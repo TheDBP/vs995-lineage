@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 11:43:46 -0400
+Subject: [PATCH] BpfHandler: warn instead of failing on a kernel below 4.14
+
+netd's BpfHandler::init returns an Error on a U+ platform with a kernel
+below 4.14, V+ below 4.19 and 25Q2+ below 5.4, which NetdUpdatable turns
+into an abort() and a netd restart loop (boot 14:
+"libnetd_updatable_init: Failed: U+ platform with kernel version < 4.14.0
+is unsupported"). Warn and carry on; every program and map the rest of
+init touches is already gated on the kernel version.
+---
+ bpf/netd/BpfHandler.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/bpf/netd/BpfHandler.cpp b/bpf/netd/BpfHandler.cpp
+index 9b57548b54..3a13cb28da 100644
+--- a/bpf/netd/BpfHandler.cpp
++++ b/bpf/netd/BpfHandler.cpp
+@@ -121,7 +121,7 @@ static Result<void> initPrograms(const char* cg2_path) {
+ 
+     // U bumps the kernel requirement up to 4.14
+     if (isAtLeastU && !isAtLeastKernelVersion(4, 14)) {
+-        return Error() << "U+ platform with kernel version < 4.14.0 is unsupported";
++        ALOGW("U+ platform with kernel version < 4.14.0 is unsupported");
+     }
+ 
+     // U mandates this mount point (though it should also be the case on T)
+@@ -131,12 +131,12 @@ static Result<void> initPrograms(const char* cg2_path) {
+ 
+     // V bumps the kernel requirement up to 4.19
+     if (isAtLeastV && !isAtLeastKernelVersion(4, 19)) {
+-        return Error() << "V+ platform with kernel version < 4.19.0 is unsupported";
++        ALOGW("V+ platform with kernel version < 4.19.0 is unsupported");
+     }
+ 
+     // 25Q2 bumps the kernel requirement up to 5.4
+     if (isAtLeast25Q2 && !isAtLeastKernelVersion(5, 4)) {
+-        return Error() << "25Q2+ platform with kernel version < 5.4.0 is unsupported";
++        ALOGW("25Q2+ platform with kernel version < 5.4.0 is unsupported");
+     }
+ 
+     unique_fd cg_fd(open(cg2_path, O_DIRECTORY | O_RDONLY | O_CLOEXEC));

@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 16:03:40 -0400
+Subject: [PATCH] bpfloader: do not treat the ringbuf test object as critical
+
+bpfRingbufProg.bpf is the only entry in the file list with
+critical: true, and it is a test object -- skip_on_user is set, so it is
+loaded on userdebug and eng builds only. Its single map is a BPF ringbuf,
+which the kernel gained in 5.8, so on 4.9 it cannot load:
+
+  libbpf: map 'test_ringbuf': failed to create: Invalid argument(-22)
+  libbpf: failed to load object '/system/etc/bpf/bpfRingbufProg.bpf'
+  panicked at system/bpf/loader/bpfloader.rs:736:17
+
+critical: true then does exactly what the comment on that field warns
+about. The panic means this loader never reaches its own last step,
+execve of netbpfload with "done", which is the only thing that sets
+bpf.progs_loaded. Every bpf::waitForProgsLoaded() caller then blocks
+forever -- including HealthLoop::UeventInit(), which leaves the health
+HAL registered with servicemanager but never polling binder, so
+BatteryService.onStart() hangs in IHealth.registerCallback() on
+system_server's main thread and the watchdog kills it at 66s.
+
+The other entries that cannot load on this kernel, memevents among them,
+already take BPF_FILE_DESC_DEFAULT's critical: false and are merely
+logged. Do the same here: a test program should not be able to boot loop
+the device.
+---
+ loader/bpfloader.rs | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/loader/bpfloader.rs b/loader/bpfloader.rs
+index f23d882..5834ec8 100644
+--- a/loader/bpfloader.rs
++++ b/loader/bpfloader.rs
+@@ -330,7 +330,16 @@ const FILE_ARR: &[BpfFileDesc] = &[
+     },
+     BpfFileDesc {
+         filename: "/system/etc/bpf/bpfRingbufProg.bpf",
+-        critical: true,
++        // lineage-24.0: not critical. This is a test object (note skip_on_user below) whose only
++        // map is a BPF ringbuf, and BPF ringbufs need kernel 5.8. On the 4.9 kernel this device
++        // ships it cannot load -- "libbpf: map 'test_ringbuf': failed to create: Invalid
++        // argument(-22)" -- and critical: true then does exactly what the comment on that field
++        // warns about: the loader panics, so it never re-execs netbpfload with "done", so
++        // bpf.progs_loaded is never set, so every bpf::waitForProgsLoaded() caller blocks
++        // forever. That wedges the health HAL before it polls binder, BatteryService hangs in
++        // IHealth.registerCallback() on system_server's main thread, and the watchdog kills it.
++        // A test program should not be able to boot loop the device.
++        critical: false,
+         skip_on_user: true,
+         maps: &[MapDesc::new(GID_ROOT, PERM_GRW, "test_ringbuf")],
+         progs: &[ProgDesc::new(GID_ROOT, "skfilter_ringbuf_test")],

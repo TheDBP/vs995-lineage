@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 09:47:14 -0400
+Subject: [PATCH] selinux: accept netlink xperms rules so Android 16+ policy
+ loads
+
+Android 16+ sepolicy carries allowxperm rules for netlink message types
+(AVTAB_XPERMS_NLMSG, specified=3). This kernel's avtab parser treats any
+xperms entry whose specified byte is not IOCTLFUNCTION or IOCTLDRIVER as
+a pre-xperms "Android M" policy and switches to compatibility parsing,
+which desyncs on the next entry:
+
+  SELinux:  Android master kernel running Android M policy in compatibility mode.
+  SELinux: avtab: invalid type or class
+
+init then fails to load the policy and reboots to the bootloader, so
+neither recovery nor system gets past init.
+
+Parse NLMSG entries in the normal layout and keep them inert: this kernel
+enforces netlink with the legacy nlmsg_* permissions, which the policy
+still grants. They contribute nothing to the ioctl driver set (len=1
+there would deny every ioctl on the socket class) and are skipped in the
+decision path instead of hitting BUG().
+
+---
+ security/selinux/ss/avtab.c    |  1 +
+ security/selinux/ss/avtab.h    |  1 +
+ security/selinux/ss/services.c | 11 +++++++++++
+ 3 files changed, 13 insertions(+)
+
+diff --git a/security/selinux/ss/avtab.c b/security/selinux/ss/avtab.c
+index 31345376aa9b..2f421a1afa71 100644
+--- a/security/selinux/ss/avtab.c
++++ b/security/selinux/ss/avtab.c
+@@ -555,6 +555,7 @@ int avtab_read_item(struct avtab *a, void *fp, struct policydb *pol,
+ 		if (avtab_android_m_compat ||
+ 			    ((xperms.specified != AVTAB_XPERMS_IOCTLFUNCTION) &&
+ 			    (xperms.specified != AVTAB_XPERMS_IOCTLDRIVER) &&
++			    (xperms.specified != AVTAB_XPERMS_NLMSG) &&
+ 			    (vers == POLICYDB_VERSION_XPERMS_IOCTL))) {
+ 			xperms.driver = xperms.specified;
+ 			if (android_m_compat_optype)
+diff --git a/security/selinux/ss/avtab.h b/security/selinux/ss/avtab.h
+index d946c9dc3c9c..e72ab5dd6c7d 100644
+--- a/security/selinux/ss/avtab.h
++++ b/security/selinux/ss/avtab.h
+@@ -58,6 +58,7 @@ struct avtab_extended_perms {
+ /* These are not flags. All 256 values may be used */
+ #define AVTAB_XPERMS_IOCTLFUNCTION	0x01
+ #define AVTAB_XPERMS_IOCTLDRIVER	0x02
++#define AVTAB_XPERMS_NLMSG		0x03
+ 	/* extension of the avtab_key specified */
+ 	u8 specified; /* ioctl, netfilter, ... */
+ 	/*
+diff --git a/security/selinux/ss/services.c b/security/selinux/ss/services.c
+index b615627d1abc..9f816794a4e7 100644
+--- a/security/selinux/ss/services.c
++++ b/security/selinux/ss/services.c
+@@ -628,6 +628,15 @@ void services_compute_xperms_drivers(
+ {
+ 	unsigned int i;
+ 
++	/*
++	 * Netlink message xperms are not enforced by this kernel; netlink
++	 * sockets are still checked with the legacy nlmsg_* permissions.
++	 * Leave them out of the ioctl driver set entirely, otherwise len=1
++	 * below would make every ioctl on the socket class deny.
++	 */
++	if (node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG)
++		return;
++
+ 	if (node->datum.u.xperms->specified == AVTAB_XPERMS_IOCTLDRIVER) {
+ 		/* if one or more driver has all permissions allowed */
+ 		for (i = 0; i < ARRAY_SIZE(xperms->drivers.p); i++)
+@@ -953,6 +962,8 @@ void services_compute_xperms_decision(struct extended_perms_decision *xpermd,
+ 		if (!security_xperm_test(node->datum.u.xperms->perms.p,
+ 					xpermd->driver))
+ 			return;
++	} else if (node->datum.u.xperms->specified == AVTAB_XPERMS_NLMSG) {
++		return;
+ 	} else {
+ 		BUG();
+ 	}

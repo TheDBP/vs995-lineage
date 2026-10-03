@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 09:49:17 -0400
+Subject: [PATCH] netd.c: let the 4.9 stats programs load on any API level
+
+The ingress/egress stats program table covers kernel 4.9 with one
+variant, stats$4_9_t, whose loader range stops at V. On a 4.9 kernel
+running 25Q2+ nothing is pinned at netd_shared/prog_netd_{ingress,egress}_stats,
+and netd's BpfHandler::init aborts on ENOENT when it attaches them.
+Every other variant starts at 4.19, so widening $4_9_t to MAXAPI
+overlaps nothing.
+---
+ bpf/progs/netd.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/bpf/progs/netd.c b/bpf/progs/netd.c
+index e4cd7c93b4..223640c19b 100644
+--- a/bpf/progs/netd.c
++++ b/bpf/progs/netd.c
+@@ -1025,8 +1025,8 @@ DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 4_19, 5_4, T, 25Q2)
+ return bpf_traffic_account(skb, INGRESS, KVER_4_19, API(T));
+ }
+ 
+-// Android T 4.9 & T/U 4.14
+-DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 4_9, 4_19, T, V)
++// Android T 4.9 & T/U 4.14 (and the only variant a 4.9 kernel can load on anything newer)
++DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 4_9, 4_19, T, MAXAPI)
+ (struct __sk_buff* skb) {
+     return bpf_traffic_account(skb, INGRESS, KVER_4_9, API(T));
+ }
+@@ -1081,8 +1081,8 @@ DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 4_19, 5_4, T, 25Q2)
+ return bpf_traffic_account(skb, EGRESS, KVER_4_19, API(T));
+ }
+ 
+-// Android T 4.9 & T/U 4.14
+-DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 4_9, 4_19, T, V)
++// Android T 4.9 & T/U 4.14 (and the only variant a 4.9 kernel can load on anything newer)
++DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 4_9, 4_19, T, MAXAPI)
+ (struct __sk_buff* skb) {
+     return bpf_traffic_account(skb, EGRESS, KVER_4_9, API(T));
+ }

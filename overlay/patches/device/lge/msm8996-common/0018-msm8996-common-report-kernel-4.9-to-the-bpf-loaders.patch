@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 12:56:44 -0400
+Subject: [PATCH] msm8996-common: report kernel 4.9 to the bpf loaders
+
+netbpfload exits 3 on this kernel ("Android S & T require kernel 4.9.")
+and the service's reboot_on_failure turns that into a
+reboot,bpfloader-failed loop. The 4.4 kernel's bpf UAPI is the Android
+backport that msm-4.9 also ships -- identical helper, program, map and
+attach type lists (ours adds CGROUP_SOCK and the 4.14 jump encodings) --
+so the version check is the only thing in the way.
+
+ro.bpf.kver_override is read by both netbpfload/netd (Connectivity
+KernelUtils.h) and the platform bpfloader, nothing else, so the override
+is scoped to the code that gates on it. 4.9.0 keeps every bpf feature
+decision at what this kernel actually implements; the remaining 4.9
+accommodations come from the Connectivity and system/bpf patches.
+
+---
+ vendor_prop.mk | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/vendor_prop.mk b/vendor_prop.mk
+index 9ee5d7ae..bf2569ec 100644
+--- a/vendor_prop.mk
++++ b/vendor_prop.mk
+@@ -38,6 +38,13 @@ PRODUCT_PROPERTY_OVERRIDES += \
+     persist.vendor.audio.speaker.prot.enable=true \
+     persist.vendor.audio.spkr.cal.duration=5
+ 
++# BPF
++# The msm8996 4.4 kernel carries the same Android eBPF backport as msm-4.9 (identical bpf UAPI:
++# CGROUP_SKB/CGROUP_SOCK, helpers through get_socket_uid), but netbpfload and netd gate on the
++# uname version and refuse anything below 4.9. Report 4.9 to the bpf code only.
++PRODUCT_PRODUCT_PROPERTIES += \
++    ro.bpf.kver_override=4.9.0
++
+ # Bluetooth
+ PRODUCT_PROPERTY_OVERRIDES += \
+     bluetooth.core.gap.le.privacy.enabled=false \

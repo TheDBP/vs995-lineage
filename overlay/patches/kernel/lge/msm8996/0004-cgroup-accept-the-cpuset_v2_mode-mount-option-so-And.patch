@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 11:52:41 -0400
+Subject: [PATCH] cgroup: accept the cpuset_v2_mode mount option so Android 17
+ can set up cgroups
+
+Android 17's libprocessgroup mounts the v1 cpuset hierarchy with
+"cpuset,noprefix,cpuset_v2_mode". This kernel predates the option
+(Linux 4.15, e1cba4b85daa), and parse_cgroupfs_options() treats an unknown
+token as a subsystem name and fails with ENOENT. init then aborts cgroup
+setup, cannot create a process group for any service, and apexd-bootstrap's
+reboot_on_failure ends the boot in the bootloader.
+
+Accept the option and report it in the mount options. The behaviour it
+requests upstream -- a cpuset keeping its configured cpu mask across
+hotplug -- is already provided here by the Android cpus_requested change
+in kernel/cpuset.c, so no cpuset.c change is needed.
+
+---
+ include/linux/cgroup-defs.h | 3 +++
+ kernel/cgroup.c             | 6 ++++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/include/linux/cgroup-defs.h b/include/linux/cgroup-defs.h
+index 8a590cd40be0..446df7a5a57b 100644
+--- a/include/linux/cgroup-defs.h
++++ b/include/linux/cgroup-defs.h
+@@ -66,6 +66,9 @@ enum {
+ enum {
+ 	CGRP_ROOT_NOPREFIX	= (1 << 1), /* mounted subsystems have no named prefix */
+ 	CGRP_ROOT_XATTR		= (1 << 2), /* supports extended attributes */
++
++	/* Enable cpuset controller in v1 cgroup to use v2 behavior */
++	CGRP_ROOT_CPUSET_V2_MODE = (1 << 4),
+ };
+ 
+ /* cftype->flags */
+diff --git a/kernel/cgroup.c b/kernel/cgroup.c
+index 64a3b3db2484..091c5d549141 100644
+--- a/kernel/cgroup.c
++++ b/kernel/cgroup.c
+@@ -1674,6 +1674,8 @@ static int cgroup_show_options(struct seq_file *seq,
+ 		seq_puts(seq, ",noprefix");
+ 	if (root->flags & CGRP_ROOT_XATTR)
+ 		seq_puts(seq, ",xattr");
++	if (root->flags & CGRP_ROOT_CPUSET_V2_MODE)
++		seq_puts(seq, ",cpuset_v2_mode");
+ 
+ 	spin_lock(&release_agent_path_lock);
+ 	if (strlen(root->release_agent_path))
+@@ -1738,6 +1740,10 @@ static int parse_cgroupfs_options(char *data, struct cgroup_sb_opts *opts)
+ 			opts->cpuset_clone_children = true;
+ 			continue;
+ 		}
++		if (!strcmp(token, "cpuset_v2_mode")) {
++			opts->flags |= CGRP_ROOT_CPUSET_V2_MODE;
++			continue;
++		}
+ 		if (!strcmp(token, "xattr")) {
+ 			opts->flags |= CGRP_ROOT_XATTR;
+ 			continue;

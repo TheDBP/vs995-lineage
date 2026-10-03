@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 14:13:14 -0400
+Subject: [PATCH] netbpfload: do not hang or reboot when bpf programs fail to
+ load
+
+Diagnosis-only, for a device whose kernel fails NetBpfLoad's floor (msm-4.9
+against the >= 5.4 that 25Q2+ requires): the stock rc reboots the device
+(reboot_on_failure reboot,bpfloader-failed) before init reaches 'boot', so
+adbd never starts and the loop is only readable as ro.boot.bootreason.
+
+Comment out reboot_on_failure in the apex rc, and in the platform rc start
+netd1shot/netd from 'on property:bpf.progs_loaded=1' instead of after a
+wait_for_prop that hangs init forever when the property never appears.
+netd1shot's own reboot_on_failure (netd1shot-fail) is thereby never reached
+either. Result on the failing kernel: no netd, no network, system_server
+cannot come up, but init reaches 'boot', adbd and logcat run.
+
+Drop this once the kernel passes the floor (eBPF backport + kver override).
+---
+ bpf/loader/netbpfload.35rc | 3 ++-
+ bpf/loader/netbpfload.rc   | 9 ++++-----
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/bpf/loader/netbpfload.35rc b/bpf/loader/netbpfload.35rc
+index 63f43e0467..47e87b7257 100644
+--- a/bpf/loader/netbpfload.35rc
++++ b/bpf/loader/netbpfload.35rc
+@@ -66,5 +66,6 @@ service bpfloader /apex/com.android.tethering/bin/netbpfload
+     #    'cannot prove return value is 0 or 1' or 'unsupported / unknown operation / helper',
+     #    'invalid bpf_context access', etc.
+     #
+-    reboot_on_failure reboot,bpfloader-failed
++    # bonito diagnosis (msm-4.9 fails the >= 5.4 kernel floor): log the failure, do not reboot
++    #reboot_on_failure reboot,bpfloader-failed
+     override
+diff --git a/bpf/loader/netbpfload.rc b/bpf/loader/netbpfload.rc
+index a937d7e6fe..4ea75452c5 100644
+--- a/bpf/loader/netbpfload.rc
++++ b/bpf/loader/netbpfload.rc
+@@ -46,15 +46,14 @@ on load-bpf-programs
+     # result in 'bpf.progs_loaded' property being set to '1'.
+     exec_start bpfloader
+ 
+-    # Wait for bpf programs to be loaded before proceeding.
+-    # (this will hang if bpfloader fails)
+-    wait_for_prop bpf.progs_loaded 1
+-
+     # Restore kallsyms protection after bpf programs have been loaded.
+     # This has to happen after bpfloader has already terminated.
+     write /proc/sys/kernel/kptr_restrict 2
+ 
+-    # At this point 'bpf.progs_loaded' is guaranteed to be '1'
++# netd only once the programs are in place; if netbpfload failed there is no netd (and no network)
++# but init carries on to 'boot', so adbd and logcat come up for diagnosis instead of a hang here
++# (wait_for_prop) or a reboot (reboot_on_failure in netbpfload.35rc, netd1shot-fail in netd.rc).
++on property:bpf.progs_loaded=1
+     exec_start netd1shot
+     start netd
+ 

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 12:55:42 -0400
+Subject: [PATCH] msm8996-common: stop overriding libhardware_legacy with the
+ VNDK v32 prebuilt
+
+The prebuilt copied over /system/lib64/libhardware_legacy.so NEEDs
+android.system.suspend@1.0.so, which Android 17 no longer ships; the
+source-built library uses android.system.suspend-V1-ndk instead. With
+the prebuilt in place every system binary that links libhardware_legacy
+fails to link -- vold first ("CANNOT LINK EXECUTABLE ... library
+android.system.suspend@1.0.so not found"), and its reboot_on_failure
+turns that into a reboot,vold-failed loop before adbd exists. Also hit:
+audioserver, dumpstate, libandroid_runtime, libandroid_servers,
+libsensorservice, libservices.core-gnss.
+
+The copy was added so the vendor blobs that dlopen the system
+libhardware_legacy got the HIDL suspend client they expect. VNDK is gone
+in 17 and those blobs (libril-qc-hal-qmi, libcne, libnetmgr, nfc_nci_nxp,
+dpmQmiMgr, ...) resolve /vendor/lib64/libhardware_legacy.so, the
+source-built copy, so the override has nothing left to serve.
+
+Verified on hardware by replacing the file on the flashed system: boot
+proceeds past vold, mount_all, init_user0 and keymaster earlyBootEnded.
+
+---
+ msm8996.mk | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/msm8996.mk b/msm8996.mk
+index 7f54d01d..0ab6a5ab 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -437,9 +437,6 @@ PRODUCT_COPY_FILES += \
+     vendor/qcom/opensource/vibrator/excluded-input-devices.xml:$(TARGET_COPY_OUT_VENDOR)/etc/excluded-input-devices.xml
+ 
+ # VNDK
+-PRODUCT_COPY_FILES += \
+-    prebuilts/vndk/v32/arm64/arch-arm64-armv8-a/shared/vndk-core/libhardware_legacy.so:$(TARGET_COPY_OUT_SYSTEM)/lib64/libhardware_legacy.so
+-
+ PRODUCT_PACKAGES += \
+     libcutils-v29 \
+     libutils-v33 \
