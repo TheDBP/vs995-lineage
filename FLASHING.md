@@ -114,8 +114,12 @@ a watchdog before exec'ing init: under `toybox unshare -m`, a tmpfs chroot holdi
 `misc`/`kmsg` nodes and `/proc`; at the timeout (150 s default) it writes `dmesg` to misc at 16 MiB,
 arms the BCB and `echo b > /proc/sysrq-trigger`. `forge/tools/boot-console-wrap.sh` builds the
 image from the build's boot.img + recovery.img (`HOST_BIN=build_output/src/out/host/linux-x86/bin`;
-`--permissive` for a first look at everything behind the first denial, `--timeout 1800` to keep the
-system up for logcat) and `pull` reads the slots back from recovery. It must be invisible to init: `FreeRamdisk` deletes the rootfs
+permissive by default, which shows everything behind the first denial; `--timeout 1800` keeps the
+system up for logcat) and `pull` reads the slots back from recovery. `--enforcing` is two boots:
+after the policy loads the watchdog is in the `kernel` domain and can only sleep (mksh builtin --
+a toybox `sleep` fails and the old tick counter fired sysrq at 19.7 s into a healthy boot) and
+write sysrq, so it just resets at the timeout; console-ramoops survives that reset on this device,
+and the next boot of the image saves it and goes to recovery. No DIAGLOG slot enforcing. It must be invisible to init: `FreeRamdisk` deletes the rootfs
 after `switch_root`, and `SwitchRoot` MS_MOVEs every mount it can see and `PLOG(FATAL)`s when one
 cannot land on the read-only system (`mkdir /system/diag` fails -> fastboot). Hand off with a
 `/diag-ready` marker so the mounts are already private before init starts.
