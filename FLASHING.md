@@ -111,19 +111,32 @@ twice and lands in recovery; read misc with
 `dd if=/dev/block/sda5 bs=4096 skip=4096 count=512 | tr -d '\000'`.
 A *hang* (no reboot) leaves nothing in ramoops after the forced power-off, so the wrapper also forks
 a watchdog before exec'ing init: under `toybox unshare -m`, a tmpfs chroot holding `toybox`, the
-`misc`/`kmsg` nodes and `/proc`; after 150 s it writes `dmesg` to misc at 16 MiB, arms the BCB and
-`echo b > /proc/sysrq-trigger`. It must be invisible to init: `FreeRamdisk` deletes the rootfs
+`misc`/`kmsg` nodes and `/proc`; at the timeout (150 s default) it writes `dmesg` to misc at 16 MiB,
+arms the BCB and `echo b > /proc/sysrq-trigger`. `forge/tools/boot-console-wrap.sh` builds the
+image from the build's boot.img + recovery.img (`HOST_BIN=build_output/src/out/host/linux-x86/bin`;
+`--permissive` for a first look at everything behind the first denial, `--timeout 1800` to keep the
+system up for logcat) and `pull` reads the slots back from recovery. It must be invisible to init: `FreeRamdisk` deletes the rootfs
 after `switch_root`, and `SwitchRoot` MS_MOVEs every mount it can see and `PLOG(FATAL)`s when one
 cannot land on the read-only system (`mkdir /system/diag` fails -> fastboot). Hand off with a
 `/diag-ready` marker so the mounts are already private before init starts.
-Traps, each of which cost a flash: PID 1 starts with fds 0-2 closed and no `/proc` -- the ramdisk
-needs `dev/{console,null,kmsg,misc}` nodes, the script needs `exec 0</dev/null 1>/dev/kmsg 2>&1`,
-and bionic cannot find a binary by bare name without `/proc/self/exe`, so mount `/proc` and call
-`/system/bin/toybox` by absolute path. `fakeroot` state dies with its session: `mknod` and `cpio`
+Traps, each of which cost a flash: PID 1 starts with fds 0-2 closed, no `/proc` and (recovery
+ramdisk) an empty `/dev`. bionic `_exit(1)`s every process except PID 1 whose stdio is closed when
+neither `/dev/null` nor `/sys/fs/selinux/null` opens, so not even `toybox mknod /dev/null` runs:
+`: > /dev/null; exec 0</dev/null 1>/dev/null 2>/dev/null` first, then mknod the real nodes and
+`exec 0</dev/null 1>/dev/kmsg 2>&1`. Broken, the kernel panics `Attempted to kill init!
+exitcode=0x00000100` 16 ms after "Freeing unused kernel memory" (ramoops survives that one). bionic
+cannot find a binary by bare name without `/proc/self/exe`, so mount `/proc` and call
+`/system/bin/toybox` by absolute path. Dry-run the script from recovery with the fds closed INSIDE
+the chroot shell -- `toybox unshare -p -f chroot <rd> /system/bin/sh -c 'exec <&- >&- 2>&-; exec
+/dry.sh'` -- closing them outside tests nothing because `env`/`unshare`/`chroot` re-open them. A
+dry run that reaches the misc write leaves a slot that reads like a real boot; zero the slots first. `fakeroot` state dies with its session: `mknod` and `cpio`
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The five things that stopped 24.0 booting on this kernel
+### The six things that stopped 24.0 booting on this kernel
+
+With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
+wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6).
 
 1. **SELinux policy does not load.** Android 16+ policy carries netlink-message xperms rules
    (`AVTAB_XPERMS_NLMSG`, specified=3); the 4.4 avtab parser's "Android M compatibility" heuristic
@@ -158,6 +171,18 @@ must run in the same `fakeroot sh -c`, or the nodes become empty regular files a
    msm-4.9 carries (identical helper/program/map/attach lists), so the device sets
    `ro.bpf.kver_override=4.9.0` -- read only by netbpfload, netd and the platform bpfloader --
    and takes bonito's Connectivity and system/bpf series for a 4.9 kernel unchanged.
+
+6. **No display: libui dropped gralloc 2/3.** On sdk >= 36 `GraphicBufferMapper` loads only
+   mapper 4/5 (`require_gralloc4_or_newer`); this vendor has allocator@2.0/mapper@2.1 over
+   `gralloc.msm8996.so`. composer@2.1-service aborts `gralloc-mapper is missing`, surfaceflinger
+   dies on the dead composer, its `onrestart` kills zygote, and audioserver/media/netd/wificond
+   follow every ~5 s -- `logcat -b crash` names them in that order. Lineage keeps gralloc 2/3
+   behind `soong_config libui.legacy_gralloc`; device patch 0019 sets it (build under test).
+
+Seen under permissive, each one flash in enforcing: `/dev/ion` labeled `device`, not `ion_device`
+(composer will be denied; bonito needed Lineage's `libion` sepolicy); livedisplay-sdm SIGABRT
+"DisplayModes backend not ready"; lmkd exits 0 every 5 s; qseecomd exit 255; camera-provider exit
+1; aconfigd `/metadata/aconfig` missing; bpfloader exit 121 at 20 s without a reboot.
 
 Not yet hit but certain on this kernel, from the same bonito series: `filterPowerSupplyEvents.o`
 needs a bounded-loop verifier (5.3; `hardware/interfaces` libhealthloop patch) and `gpuMem.bpf`
