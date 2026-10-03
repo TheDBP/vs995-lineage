@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 15:45:48 -0400
+Subject: [PATCH] msm8996-common: keep gralloc 2/3 support in libui
+
+The display stack is gralloc 1.0 behind the HIDL allocator@2.0 and
+mapper@2.1 passthrough services. frameworks/native dropped gralloc 2/3
+from libui's GraphicBufferMapper on api 36+ (require_gralloc4_or_newer);
+Lineage restores them behind soong_config libui.legacy_gralloc, which a
+device has to set. Without it composer@2.1-service aborts on startup with
+"gralloc-mapper is missing", surfaceflinger dies on the dead HIDL object
+and its onrestart takes zygote and everything hanging off it down every
+five seconds. The boot sits on the LG logo with adbd up.
+
+---
+ BoardConfigCommon.mk | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index 28a4f2b9..78d0d83a 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -93,6 +93,10 @@ TARGET_NO_BOOTLOADER := true
+ USE_CAMERA_STUB := true
+ 
+ # Display
++# gralloc here is the 1.0 module behind the HIDL allocator@2.0/mapper@2.1 passthrough; libui on
++# api 36+ only loads mapper 4/5 unless built with -DLEGACY_GRALLOC, and without it
++# composer@2.1-service aborts "gralloc-mapper is missing" and surfaceflinger with it.
++$(call soong_config_set_bool,libui,legacy_gralloc,true)
+ MAX_VIRTUAL_DISPLAY_DIMENSION := 4096
+ TARGET_CONTINUOUS_SPLASH_ENABLED := true
+ TARGET_FORCE_HWC_FOR_VIRTUAL_DISPLAYS := true
