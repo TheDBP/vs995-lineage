@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 18:05:46 -0400
+Subject: [PATCH] msm8996-common: include the Lineage libion sepolicy
+
+system/sepolicy 9b2d37dc2 (Android 17) dropped the /dev/ion file_contexts
+entry and every coredomain ion_device rule, so the node is labeled
+`device` and nothing in the tree relabels it. On this kernel gralloc,
+Adreno, QSEECom and keymaster all allocate through /dev/ion: enforcing,
+qseecomd (tee) and keymaster-3-0 are denied the open at 13 s and the
+composer cannot allocate. device/lineage/sepolicy/libion carries the
+removed rules; include it the way bonito does.
+
+---
+ BoardConfigCommon.mk | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index 78d0d83a..7390d800 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -161,6 +161,8 @@ include device/qcom/sepolicy-legacy-um/SEPolicy.mk
+ include hardware/sony/timekeep/sepolicy/SEPolicy.mk
+ BOARD_VENDOR_SEPOLICY_DIRS += $(COMMON_PATH)/sepolicy/vendor
+ PRODUCT_PRIVATE_SEPOLICY_DIRS += $(COMMON_PATH)/sepolicy/private
++# ION labeling and coredomain rules left system/sepolicy in Android 17 (9b2d37dc2); this kernel has no dmabuf heaps
++include device/lineage/sepolicy/libion/sepolicy.mk
+ SELINUX_IGNORE_NEVERALLOWS := true
+ 
+ # Verity
