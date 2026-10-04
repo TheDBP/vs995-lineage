@@ -11,3 +11,7 @@ out/
 
 # reclaimed manufacturer ROM, used to extract OEM assets -- never committed
 Ether_Stock_ROM_*.zip
+
+# LG stock KDZs (VS995 firmware, and the US99610f build the DirtySanta unlock uses) -- never committed
+/Stock ROMs/
+*.kdz
