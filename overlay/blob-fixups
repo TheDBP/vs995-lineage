@@ -1,0 +1,12 @@
+# DT_NEEDED on framework libs the vendor linker namespace cannot reach (not LLNDK, not in /vendor/lib*).
+# forge/tools/check-vendor-needed.sh --import-check: none of these blobs imports a symbol from the lib it names.
+# Without this: camera provider@2.4 "init failed" restart loop, mm-qcamera-daemon and fpc_early_loader
+# "CANNOT LINK EXECUTABLE ... not found".
+vendor/lge/v20-common/proprietary/vendor/lib/hw/camera.msm8996.so              remove-needed libandroid.so
+vendor/lge/v20-common/proprietary/vendor/lib/libmmcamera2_stats_modules.so     remove-needed libandroid.so
+vendor/lge/v20-common/proprietary/vendor/lib/libarcsoft_beauty_shot.so         remove-needed libandroid.so
+vendor/lge/v20-common/proprietary/vendor/lib/libmpbase.so                      remove-needed libandroid.so
+vendor/lge/v20-common/proprietary/vendor/lib/libfilm_emulation.so              remove-needed libjnigraphics.so
+vendor/lge/v20-common/proprietary/vendor/bin/fpc_early_loader                  remove-needed libandroid_runtime.so
+vendor/lge/v20-common/proprietary/vendor/lib/libfpfactory.so                   remove-needed libandroid_runtime.so
+vendor/lge/v20-common/proprietary/vendor/lib64/libfpfactory.so                 remove-needed libandroid_runtime.so

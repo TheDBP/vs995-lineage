@@ -137,7 +137,7 @@ dry run that reaches the misc write leaves a slot that reads like a real boot; z
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The nine things that stopped 24.0 booting on this kernel
+### The ten things that stopped 24.0 booting on this kernel
 
 With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
 wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6). With 1-7
@@ -202,6 +202,19 @@ and the three platform patches below the system boots ENFORCING (2026-10-04, bui
    Watchdog kills it (`*** GOODBYE!`, every ~105 s, boot animation forever). Fixed inside 0003.
    Check every `service` line's binary against the image before flashing:
    `forge/tools/check-service-domains.sh <system.img>`.
+10. **Camera and fingerprint blobs name framework libraries the vendor namespace cannot load.**
+   `camera.msm8996.so`, `libmmcamera2_stats_modules.so`, `libarcsoft_beauty_shot.so` and
+   `libmpbase.so` carry `DT_NEEDED libandroid.so`; `fpc_early_loader` and both `libfpfactory.so`
+   carry `libandroid_runtime.so`; `libfilm_emulation.so` carries `libjnigraphics.so`. Vendor is
+   inside system here but the `[vendor]` linker namespace still applies (`/vendor/bin` is
+   realpath'd to `/system/vendor/bin`), and it reaches system only for the LLNDK, which none of
+   these are: the camera provider@2.4 fails init and restarts every 5 s, `mm-qcamera-daemon` and
+   `fpc_early_loader` die with `CANNOT LINK EXECUTABLE ... not found`. No vendor linker.config is
+   possible without a vendor image. None of the eight blobs imports a symbol from the library it
+   names, so `overlay/blob-fixups` drops the entries with patchelf at overlay time
+   (`forge/tools/blob-fixups.sh`; same edit Lineage's xiaomi msm8996 extract-files makes). Find
+   these from the out tree, not the phone:
+   `forge/tools/check-vendor-needed.sh --import-check . out/target/product/vs995`. Goes in build 15.
 
 Three platform patches taken from bonito once adb was alive, all confirmed in build 12:
 `hardware/interfaces` libhealthloop (`filterPowerSupplyEvents.o` needs a 5.3 loop verifier;
@@ -210,9 +223,9 @@ without it bpfloader exits 121), `system/memory/libmeminfo` (`gpuMem.bpf` needs 
 `frameworks/base` SystemServiceRegistry (one wtf per missing service).
 
 Still seen enforcing after (8), none of them boot-blocking: livedisplay-sdm SIGABRT "DisplayModes
-backend not ready"; `mm-qcamera-daemon` cannot find `libandroid.so`, `fpc_early_loader` cannot
-find `libandroid_runtime.so`; `timeInState.bpf` fails with ESRCH; `bpf.progs_loaded` stays unset
-though netd runs; qseecomd exit 255; aconfigd `/metadata/aconfig` missing.
+backend not ready"; `timeInState.bpf` fails with ESRCH; `bpf.progs_loaded` stays unset though
+netd runs; qseecomd exit 255; aconfigd `/metadata/aconfig` missing; `xtwifi-inet-agent` needs a
+`libcurl.so` no image carries (same on 22.2; GNSS runs through the qti HAL regardless).
 
 Sandbox a candidate `init` on the running recovery before flashing: copy it to a tmpfs, bind-mount
 an empty file over `/system/bin/init` so second stage cannot exec, mount selinuxfs under the chroot,
