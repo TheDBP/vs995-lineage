@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 10:27:12 -0400
+Subject: [PATCH] msm8996-common: LiveDisplay without DisplayModes, as on 22.2
+
+The AIDL sdm LiveDisplay service declares and constructs DisplayModes
+unconditionally, and its constructor aborts when the QDCM backend
+reports no display modes ("DisplayModes backend not ready, exiting").
+This panel has none -- there is no qdcm_calib_data in /vendor/etc, and
+the 22.2 manifest declared only IPictureAdjustment.
+
+The abort loop is not cosmetic: IDisplayModes is declared in the VINTF
+manifest, so LiveDisplayService's boot-phase handler waits for it
+forever ("Waited one second for vendor.lineage.livedisplay.IDisplayModes/
+default") inside finishBooting(). sys.boot_completed is set right after
+that handler returns, so the UI is up but boot never completes; the first
+system_server dies to the Watchdog on the display thread instead.
+
+Opt out of DisplayModes with the soong config the HAL exposes (the same
+line device/google/bonito uses), which drops both the constructor and the
+VINTF fragment. PictureAdjustment stays.
+
+---
+ msm8996.mk | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/msm8996.mk b/msm8996.mk
+index 0ab6a5ab..674d8881 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -255,6 +255,11 @@ PRODUCT_PACKAGES += \
+     init.recovery.qcom.rc
+ 
+ # LiveDisplay
++# PictureAdjustment only, as on 22.2: this panel has no QDCM display modes (no qdcm_calib_data),
++# and the AIDL sdm service aborts in the DisplayModes constructor instead of skipping it. With
++# IDisplayModes declared but never registered, LiveDisplayService blocks in finishBooting and
++# sys.boot_completed is never set.
++$(call soong_config_set_bool,livedisplay_sdm,enable_dm,false)
+ PRODUCT_PACKAGES += \
+     vendor.lineage.livedisplay-service.sdm
+ 

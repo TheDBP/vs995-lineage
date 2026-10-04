@@ -137,7 +137,7 @@ dry run that reaches the misc write leaves a slot that reads like a real boot; z
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The twelve things that stopped 24.0 booting on this kernel
+### The thirteen things that stopped 24.0 booting on this kernel
 
 With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
 wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6). With 1-7
@@ -249,14 +249,29 @@ and the three platform patches below the system boots ENFORCING (2026-10-04, bui
    sends `LMK_START_MONITORING`, which in in-kernel mode makes lmkd exit once ("Failure to
    initialize monitoring"); init restarts it and it stays up. Goes in build 16.
 
+13. **A declared LiveDisplay HAL that never comes up, so `finishBooting()` never finishes.** Build 16:
+   lmkd stable, SystemUI up, power menu works, but `sys.boot_completed` never set. The last
+   `OnBootPhase_1000_*` line is `LiveDisplayService` with no "took to complete", then
+   `Waited one second for vendor.lineage.livedisplay.IDisplayModes/default` forever: the interface
+   is declared in the VINTF manifest so the framework waits, and the sdm service aborts in the
+   `DisplayModes` constructor (`DisplayModes backend not ready`) because this panel has no QDCM
+   modes (no `qdcm_calib_data` in `/vendor/etc`). The 22.2 manifest declared `IPictureAdjustment`
+   only; the HIDL service registered DM only when declared, the AIDL one declares and constructs
+   both by default. The first system_server dies to the Watchdog on the display thread (69 s) for
+   the same wait. Fix (patch 0022, the bonito line):
+   `$(call soong_config_set_bool,livedisplay_sdm,enable_dm,false)`, which drops the constructor and
+   the `-dm.xml` fragment. Static check: `out/.../vendor/etc/vintf/manifest/` must have only
+   `vendor.lineage.livedisplay-service.sdm-pa.xml`. Diagnostic rule: a boot that reaches the UI
+   with no crash and no `boot_completed` is a `waitForDeclaredService`; grep logcat for
+   `Waited one second for`. Goes in build 17.
+
 Three platform patches taken from bonito once adb was alive, all confirmed in build 12:
 `hardware/interfaces` libhealthloop (`filterPowerSupplyEvents.o` needs a 5.3 loop verifier;
 without it bpfloader exits 121), `system/memory/libmeminfo` (`gpuMem.bpf` needs the
 `gpu_mem_total` tracepoint this kernel lacks; `BpfMapRO` must not abort system_server) and
 `frameworks/base` SystemServiceRegistry (one wtf per missing service).
 
-Still seen enforcing after (8), none of them boot-blocking: livedisplay-sdm SIGABRT "DisplayModes
-backend not ready"; `timeInState.bpf` fails with ESRCH; `bpf.progs_loaded` stays unset though
+Still seen enforcing after (8), none of them boot-blocking: `timeInState.bpf` fails with ESRCH; `bpf.progs_loaded` stays unset though
 netd runs; qseecomd exit 255; `xtwifi-inet-agent` needs a
 `libcurl.so` no image carries (same on 22.2; GNSS runs through the qti HAL regardless).
 
