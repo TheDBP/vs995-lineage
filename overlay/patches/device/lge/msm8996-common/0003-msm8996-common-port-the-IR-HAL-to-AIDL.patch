@@ -17,6 +17,11 @@ namespace, which is where libcir_driver is declared; under make the
 dependency resolved globally. TARGET_USE_LGE_IR guarded the make module
 and had no other reader, so it goes with it -- every device sharing this
 tree set it to true.
+
+The rename reaches two more places: file_contexts, so init can still
+find a domain for the binary (a service with none is never started, and
+system_server then waits forever on the declared IConsumerIr), and the
+rc, which declares the AIDL interface so init can start it on demand.
 ---
  Android.bp                                |  4 +
  BoardConfigCommon.mk                      |  5 +-
@@ -24,11 +29,12 @@ tree set it to true.
  ir/Android.mk                             | 47 -----------
  ir/ConsumerIr.cpp                         | 97 ++++++++++++-----------
  ir/ConsumerIr.h                           | 53 +++++--------
- ir/android.hardware.ir-service.lge.rc     | 10 +++
+ ir/android.hardware.ir-service.lge.rc     | 11 +++
  ir/android.hardware.ir-service.lge.xml    | 11 +++
  ir/android.hardware.ir@1.0-service.lge.rc |  4 -
  ir/service.cpp                            | 51 +++---------
- 10 files changed, 131 insertions(+), 173 deletions(-)
+ sepolicy/vendor/file_contexts             |  2 +-
+ 11 files changed, 133 insertions(+), 174 deletions(-)
  create mode 100644 ir/Android.bp
  delete mode 100644 ir/Android.mk
  create mode 100644 ir/android.hardware.ir-service.lge.rc
@@ -357,13 +363,14 @@ new file mode 100644
 index 00000000..ba7339a6
 --- /dev/null
 +++ b/ir/android.hardware.ir-service.lge.rc
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,11 @@
 +#
 +# SPDX-FileCopyrightText: 2018 The LineageOS Project
 +# SPDX-License-Identifier: Apache-2.0
 +#
 +
 +service vendor.ir-default /vendor/bin/hw/android.hardware.ir-service.lge
++    interface aidl android.hardware.ir.IConsumerIr/default
 +    class hal
 +    user system
 +    group system
@@ -462,3 +469,15 @@ index bcd0894a..6aeb98ff 100644
 +    ABinderProcess_joinThreadPool();
 +    return EXIT_FAILURE;  // should not reach
  }
+diff --git a/sepolicy/vendor/file_contexts b/sepolicy/vendor/file_contexts
+--- a/sepolicy/vendor/file_contexts
++++ b/sepolicy/vendor/file_contexts
+@@ -46,7 +46,7 @@
+ 
+ # IR
+ /dev/ttyMSM1                                                        u:object_r:cir_device:s0
+-/(vendor|system/vendor)/bin/hw/android\.hardware\.ir@1\.0-service.lge       u:object_r:hal_ir_default_exec:s0
++/(vendor|system/vendor)/bin/hw/android\.hardware\.ir-service\.lge          u:object_r:hal_ir_default_exec:s0
+ 
+ # Lights
+ /sys/devices/virtual/lg_rgb_led/use_patterns/onoff_patterns         u:object_r:sysfs_leds:s0
