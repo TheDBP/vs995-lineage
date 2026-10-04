@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 18:44:33 -0400
+Subject: [PATCH] soc: qcom: clear the factory-cable flag DirtySanta leaves in
+ SMEM VENDOR1
+
+On a V20 running the DirtySanta (US996 engineering) bootloader the LGE
+modem rejects every AP data call: QMI WDS START_NETWORK_INTERFACE fails
+with QMI_ERR_UNKNOWN and no call-end reason, while LTE attach, IMS and
+voice work. The modem F3 log shows why:
+
+  sys.c: LGP: PRODUCTION_TEST_MODE is 0
+  ds_qmi_wds.c: [LG_DATA] AP data call block under factory cable connection
+
+lge_is_factory_cable() reads the 16-byte SMEM_ID_VENDOR1 block the
+bootloader fills in (lge_hw_smem_id1_type). A stock bootloader writes 0
+to the last word; the engineering bootloader leaves it at 0xffffffff.
+Any non-zero value there blocks data. The modem reads the block live:
+clearing the word from a kernel module on a running system makes the
+very next data call succeed.
+
+Add a subsys_initcall, alongside the existing DirtySanta VENDOR0 fixup,
+that clears that word before the modem is started, and enable it for the
+vs995. The VENDOR0 fixup is not used here: on the vs995 the bootloader
+allocates VENDOR0 as the 16-byte hw_rev/model_name header only, and
+mobile data does not depend on it.
+
+---
+ arch/arm64/configs/vendor/lge/vs995.config  |  3 +
+ drivers/soc/qcom/Kconfig                    | 10 ++++
+ drivers/soc/qcom/Makefile                   |  1 +
+ drivers/soc/qcom/dirtysanta_fixup_vendor1.c | 66 +++++++++++++++++++++
+ 4 files changed, 80 insertions(+)
+ create mode 100644 drivers/soc/qcom/dirtysanta_fixup_vendor1.c
+
+diff --git a/arch/arm64/configs/vendor/lge/vs995.config b/arch/arm64/configs/vendor/lge/vs995.config
+index 33dc48d628f3..9473bfaeacea 100644
+--- a/arch/arm64/configs/vendor/lge/vs995.config
++++ b/arch/arm64/configs/vendor/lge/vs995.config
+@@ -13,3 +13,6 @@ CONFIG_WIFI_CONTROL_FUNC=y
+ 
+ # LGE - USB
+ CONFIG_LGE_USB_ANX7688_ADC=y
++
++# DirtySanta bootloader leaves the factory-cable flag set; the modem then refuses AP data calls
++CONFIG_DIRTYSANTA_FIXUP_VENDOR1=y
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index c50020721563..210506a3a2e3 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -1056,6 +1056,16 @@ config DIRTYSANTA_FIXUP_G6_SIMCOUNT
+ 	  If unset the value from the kernel parameter "lge.sim_num" will
+ 	  be used.
+ 
++config DIRTYSANTA_FIXUP_VENDOR1
++	boolean "Clear the factory-cable flag left in SMEM VENDOR1"
++	default n
++	help
++	  The DirtySanta engineering bootloader leaves the factory-cable
++	  flag in the SMEM VENDOR1 block at 0xffffffff. The LGE modem then
++	  treats every AP data call as made over a factory cable and
++	  rejects it, so mobile data never comes up although LTE attach,
++	  IMS and voice work. Clear the flag before the modem starts.
++
+ config DIRTYSANTA_FIXUP_DEVICENAME
+ 	string "Device name to use for VENDOR0 smem area"
+ 	depends on DIRTYSANTA_FIXUP
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index 97355bc19bce..d3d9c5a96174 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -117,3 +117,4 @@ obj-$(CONFIG_QCOM_QDSS_BRIDGE) += qdss_bridge.o
+ obj-$(CONFIG_MFSE_QMI) += mfse_qmi_v01.o mfse_qmi.o
+ obj-$(CONFIG_DIRTYSANTA_FIXUP) += dirtysanta_fixup.o
+ obj-$(CONFIG_DIRTYSANTA_FIXUP_G6) += dirtysanta_fixup_g6.o
++obj-$(CONFIG_DIRTYSANTA_FIXUP_VENDOR1) += dirtysanta_fixup_vendor1.o
+diff --git a/drivers/soc/qcom/dirtysanta_fixup_vendor1.c b/drivers/soc/qcom/dirtysanta_fixup_vendor1.c
+new file mode 100644
+index 000000000000..e3984923b7f2
+--- /dev/null
++++ b/drivers/soc/qcom/dirtysanta_fixup_vendor1.c
+@@ -0,0 +1,66 @@
++/*
++ * Clear the factory-cable flag an engineering bootloader leaves in SMEM
++ * VENDOR1 before the modem reads it.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#include <linux/init.h>
++#include <linux/printk.h>
++#include <linux/err.h>
++#include <soc/qcom/smem.h>
++
++/*
++ * SMEM_ID_VENDOR1 is a 16-byte block the bootloader fills in for the LGE
++ * modem firmware (lge_hw_smem_id1_type). The first word is the SBL cable
++ * type; the last word is the factory-cable/QEM flag that the modem's
++ * lge_is_factory_cable() tests on every data call. A stock bootloader
++ * writes 0 there. The DirtySanta US996 engineering bootloader leaves it
++ * at 0xffffffff, so the modem believes a factory cable is attached and
++ * rejects every AP data call (QMI WDS START_NETWORK_INTERFACE fails with
++ * QMI_ERR_UNKNOWN; the F3 log says "AP data call block under factory
++ * cable connection"). LTE attach, IMS and ATCoP calls bypass that check,
++ * which is why registration and VoLTE look fine while mobile data never
++ * comes up.
++ */
++#define VENDOR1_FACTORY_CABLE_OFFSET	12
++#define VENDOR1_MIN_SIZE		16
++
++static int __init dirtysanta_fixup_vendor1(void)
++{
++	u32 *ptr;
++	unsigned size = 0;
++
++	ptr = smem_get_entry(SMEM_ID_VENDOR1, &size, 0, SMEM_ANY_HOST_FLAG);
++	if (IS_ERR_OR_NULL(ptr)) {
++		pr_info("DirtySanta: VENDOR1 not present in smem as of subsys_init\n");
++		return -EFAULT;
++	}
++
++	if (size < VENDOR1_MIN_SIZE) {
++		pr_err("DirtySanta: VENDOR1 area too small (%u)\n", size);
++		return -ENOMEM;
++	}
++
++	ptr += VENDOR1_FACTORY_CABLE_OFFSET / sizeof(*ptr);
++
++	if (*ptr == 0) {
++		pr_info("DirtySanta: VENDOR1 factory-cable flag already clear\n");
++		return 0;
++	}
++
++	pr_info("DirtySanta: clearing VENDOR1 factory-cable flag 0x%08x\n", *ptr);
++	*ptr = 0;
++
++	return 0;
++}
++
++/* smem is initialized at arch_initcall(); the modem is loaded much later */
++subsys_initcall(dirtysanta_fixup_vendor1);
