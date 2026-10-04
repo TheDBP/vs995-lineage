@@ -137,10 +137,12 @@ dry run that reaches the misc write leaves a slot that reads like a real boot; z
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The six things that stopped 24.0 booting on this kernel
+### The eight things that stopped 24.0 booting on this kernel
 
 With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
-wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6).
+wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6). With 1-7
+and the three platform patches below the system boots ENFORCING (2026-10-04, build 12): adb
+`device`, surfaceflinger and the SDM composer up, boot animation drawing, then (8).
 
 1. **SELinux policy does not load.** Android 16+ policy carries netlink-message xperms rules
    (`AVTAB_XPERMS_NLMSG`, specified=3); the 4.4 avtab parser's "Android M compatibility" heuristic
@@ -181,17 +183,28 @@ wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG l
    `gralloc.msm8996.so`. composer@2.1-service aborts `gralloc-mapper is missing`, surfaceflinger
    dies on the dead composer, its `onrestart` kills zygote, and audioserver/media/netd/wificond
    follow every ~5 s -- `logcat -b crash` names them in that order. Lineage keeps gralloc 2/3
-   behind `soong_config libui.legacy_gralloc`; device patch 0019 sets it (build under test).
+   behind `soong_config libui.legacy_gralloc`; device patch 0019 sets it.
+7. **`/dev/ion` is labeled `device`.** Android 17 `system/sepolicy` dropped the `/dev/ion` entry
+   and the coredomain ion rules; the composer and keymaster are denied. Device patch 0020
+   includes Lineage's `device/lineage/sepolicy/libion/sepolicy.mk`.
+8. **The odm sepolicy files are unreadable.** Vendor is inside the system image here
+   (`/vendor -> /system/vendor`), so the image builder labels them by `/system/vendor/odm/...`,
+   which no odm rule in `system/sepolicy/private/file_contexts` matches (only the odm_dlkm rules
+   carry `system/vendor/...`); the subtree is `vendor_file`, system_server dies in
+   PackageManagerService with `Unable to load SELinux MMAC policy`, zygote restarts every ~5 s
+   behind a boot animation that never ends. `overlay/patches/system/sepolicy/0001` adds the
+   alternative to every odm rule (build 13).
 
-Seen under permissive, each one flash in enforcing: `/dev/ion` labeled `device`, not `ion_device`
-(composer will be denied; bonito needed Lineage's `libion` sepolicy); livedisplay-sdm SIGABRT
-"DisplayModes backend not ready"; lmkd exits 0 every 5 s; qseecomd exit 255; camera-provider exit
-1; aconfigd `/metadata/aconfig` missing; bpfloader exit 121 at 20 s without a reboot.
+Three platform patches taken from bonito once adb was alive, all confirmed in build 12:
+`hardware/interfaces` libhealthloop (`filterPowerSupplyEvents.o` needs a 5.3 loop verifier;
+without it bpfloader exits 121), `system/memory/libmeminfo` (`gpuMem.bpf` needs the
+`gpu_mem_total` tracepoint this kernel lacks; `BpfMapRO` must not abort system_server) and
+`frameworks/base` SystemServiceRegistry (one wtf per missing service).
 
-Not yet hit but certain on this kernel, from the same bonito series: `filterPowerSupplyEvents.o`
-needs a bounded-loop verifier (5.3; `hardware/interfaces` libhealthloop patch) and `gpuMem.bpf`
-needs the `gpu_mem_total` tracepoint, which this kernel lacks (`system/memory/libmeminfo` patch;
-otherwise `BpfMapRO` aborts system_server). Both show up only after netd is up, with adb alive.
+Still seen enforcing after (8), none of them boot-blocking: livedisplay-sdm SIGABRT "DisplayModes
+backend not ready"; `mm-qcamera-daemon` cannot find `libandroid.so`, `fpc_early_loader` cannot
+find `libandroid_runtime.so`; `timeInState.bpf` fails with ESRCH; `bpf.progs_loaded` stays unset
+though netd runs; qseecomd exit 255; aconfigd `/metadata/aconfig` missing.
 
 Sandbox a candidate `init` on the running recovery before flashing: copy it to a tmpfs, bind-mount
 an empty file over `/system/bin/init` so second stage cannot exec, mount selinuxfs under the chroot,
