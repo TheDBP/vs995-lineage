@@ -41,14 +41,22 @@ with `fastboot flash boot boot-magisk.img` (the ROM install rewrites boot).
 - **four HALs on AIDL** (24.0 removed their HIDL interfaces): lights and fingerprint use the generic
   Lineage services, LiveDisplay uses `vendor.lineage.livedisplay-service.sdm`, and IR keeps a device
   implementation ported to AIDL because its blaster is a UART behind `libcir_driver`, not a LIRC node.
-- **160px status bar everywhere** (device patch 0023, untested on hardware): msm8996-common's 32dp
+- **160px status bar everywhere** (device patch 0023, verified build 18): msm8996-common's 32dp
   `status_bar_height` override is gone, so the framework's portrait value (the 160px cutout strip)
   reaches SystemUI. 24.0 sizes the expanded-QS header rows from that dimen; at 32dp the clock/date
   row started inside the strip and the clock drew under the camera.
-- **400 dpi, text 1.15×** (device patches 0024/0025, untested on hardware): 576 dp wide instead
+- **400 dpi, text 1.15×** (device patches 0024/0025, verified build 18): 576 dp wide instead
   of 411. Not 320: at 720 dp the phone crosses `sw600dp` and becomes a tablet (taskbar, corner nav
   buttons), tried live with `wm density 320`. The font scale is `def_device_font_scale`, applied
   by SettingsProvider on fresh data only — a dirty flash keeps the old `font_scale`.
+- **mobile data on a DirtySanta phone** (kernel patch 0006, verified build 19): the US996
+  engineering bootloader leaves the last word of SMEM VENDOR1 at `0xffffffff`; the LG modem reads
+  that as a factory cable and refuses every AP data call (`[LG_DATA] AP data call block under
+  factory cable connection` in its F3 log; QMI SNI error 47, no call-end reason) while LTE attach,
+  IMS and SMS work -- on any ROM, including the official nightly. `CONFIG_DIRTYSANTA_FIXUP_VENDOR1`
+  clears the word at subsys_initcall, before the modem starts. Diagnosis: `forge/tools/diag-f3.sh`
+  for the modem log, `qmi-sni.sh` for the raw SNI answer, `smem-poke` (via `kmod-build.sh`) to
+  test a flag live before patching. APN/profile/DSD/APM/IPA and the modem image are not involved.
 
 Dirty flash (same branch, keep data): skip *Format data* and just sideload.
 
