@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=a576619dacd8d2d5bfb24e41022dc2ab864f29c6
-subject=tools: blob-fixups.sh — declarative DT_NEEDED/SONAME edits to prebuilt blobs
-synced=2026-10-04T08:38:44Z
+commit=3d493eb6546ec188e1b6fdfc71940550de7ad3d8
+subject=README: overlay/blob-fixups in the model section
+synced=2026-10-04T09:21:55Z
