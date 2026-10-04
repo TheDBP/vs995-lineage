@@ -137,7 +137,7 @@ dry run that reaches the misc write leaves a slot that reads like a real boot; z
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The ten things that stopped 24.0 booting on this kernel
+### The eleven things that stopped 24.0 booting on this kernel
 
 With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
 wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6). With 1-7
@@ -215,6 +215,22 @@ and the three platform patches below the system boots ENFORCING (2026-10-04, bui
    (`forge/tools/blob-fixups.sh`; same edit Lineage's xiaomi msm8996 extract-files makes). Find
    these from the out tree, not the phone:
    `forge/tools/check-vendor-needed.sh --import-check . out/target/product/vs995`. Goes in build 15.
+11. **No `/metadata`, so no aconfig flags, so system_server dies.** Android 17 reads aconfig flags
+   from `/metadata/aconfig/{maps,boot,flags}`, which aconfigd populates in `post-fs`. This device
+   has no metadata partition, and the system-as-root image had no `/metadata` directory at all:
+   every aconfigd service stayed `stopped`, `AconfigPackage.load` returned
+   `ERROR_PACKAGE_NOT_FOUND` for every package, and `AdvancedProtectionConfigLoader` turns an
+   unreadable flag into `IllegalArgumentException: Invalid feature flag` -- fatal in
+   system_server, every ~20 s, boot animation forever (build 14). Fix (patch 0021, the Lineage
+   sony/nile-common pattern): `BOARD_USES_METADATA_PARTITION := true` creates the mount point,
+   `init.target.rc` `on fs` mounts `tmpfs` there (`size=10m`) after `mount_all`, and vendor
+   sepolicy grants the fourteen public `*_metadata_file` types `tmpfs:filesystem associate`
+   (`tmpfs` is `fs_type`, so without it init's labelled `mkdir`s are denied). The three
+   private-only types (tradeinmode, prefetch, libprocessgroup) cannot be named in vendor policy;
+   those `mkdir`s fail and nothing needs them. Nothing under `/metadata` survives a reboot: flag
+   overrides, bootstat, watchdog state. The unused `encrypt` partition (sda10, labelled
+   `metadata_block_device` already) is the persistent alternative if that ever matters. Static
+   check before flashing: the root of `system.img` must contain `metadata`. Goes in build 15.
 
 Three platform patches taken from bonito once adb was alive, all confirmed in build 12:
 `hardware/interfaces` libhealthloop (`filterPowerSupplyEvents.o` needs a 5.3 loop verifier;
@@ -224,7 +240,7 @@ without it bpfloader exits 121), `system/memory/libmeminfo` (`gpuMem.bpf` needs 
 
 Still seen enforcing after (8), none of them boot-blocking: livedisplay-sdm SIGABRT "DisplayModes
 backend not ready"; `timeInState.bpf` fails with ESRCH; `bpf.progs_loaded` stays unset though
-netd runs; qseecomd exit 255; aconfigd `/metadata/aconfig` missing; `xtwifi-inet-agent` needs a
+netd runs; qseecomd exit 255; `xtwifi-inet-agent` needs a
 `libcurl.so` no image carries (same on 22.2; GNSS runs through the qti HAL regardless).
 
 Sandbox a candidate `init` on the running recovery before flashing: copy it to a tmpfs, bind-mount

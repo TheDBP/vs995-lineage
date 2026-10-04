@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 05:58:57 -0400
+Subject: [PATCH] msm8996-common: mount a tmpfs on /metadata (no metadata
+ partition)
+
+Android 17 reads aconfig flags from the new storage under
+/metadata/aconfig, populated by aconfigd from post-fs. This device has
+no metadata partition and the system-as-root image had no /metadata
+directory, so aconfigd never initialized, AconfigPackage.load failed
+with ERROR_PACKAGE_NOT_FOUND for every package, and system_server died
+every ~20 s in AdvancedProtectionConfigLoader ("Invalid feature flag").
+
+BOARD_USES_METADATA_PARTITION creates the mount point in the root image;
+init.target.rc mounts a 10 MiB tmpfs there in "on fs", before the init.rc
+post-fs actions that populate it. The platform labels the /metadata
+subdirectories from file_contexts, so each of those types needs
+tmpfs:filesystem associate. Flag overrides and the other /metadata state
+do not persist across a reboot on this tmpfs.
+
+---
+ BoardConfigCommon.mk       |  4 ++++
+ rootdir/etc/init.target.rc |  4 ++++
+ sepolicy/vendor/file.te    | 19 +++++++++++++++++++
+ 3 files changed, 27 insertions(+)
+
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index 7390d800..e8ccf5c2 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -156,6 +156,10 @@ ENABLE_VENDOR_RIL_SERVICE := true
+ # Root directories
+ BOARD_ROOT_EXTRA_FOLDERS := firmware persist persist-lg sns mpt
+ 
++# No metadata partition; /metadata is a tmpfs mounted from init.target.rc (on fs). The mount point
++# has to exist in the system-as-root image.
++BOARD_USES_METADATA_PARTITION := true
++
+ # SELinux policies
+ include device/qcom/sepolicy-legacy-um/SEPolicy.mk
+ include hardware/sony/timekeep/sepolicy/SEPolicy.mk
+diff --git a/rootdir/etc/init.target.rc b/rootdir/etc/init.target.rc
+index a60c6efa..1c848b66 100755
+--- a/rootdir/etc/init.target.rc
++++ b/rootdir/etc/init.target.rc
+@@ -48,6 +48,10 @@ on fs
+     symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+     mount_all /vendor/etc/fstab.qcom
+     swapon_all /vendor/etc/fstab.qcom
++    # No metadata partition. aconfigd (post-fs) needs /metadata/aconfig writable before
++    # system_server, which treats a flag it cannot read as fatal; flag overrides and the
++    # other /metadata state do not survive a reboot on this tmpfs.
++    mount tmpfs tmpfs /metadata size=10m
+     # These directories have different labeling in stock rom.
+     # Jumping between stock and LineageOS needs restorecon -F
+     # to apply our labeling.
+diff --git a/sepolicy/vendor/file.te b/sepolicy/vendor/file.te
+index 81ebbe61..4b68d46c 100644
+--- a/sepolicy/vendor/file.te
++++ b/sepolicy/vendor/file.te
+@@ -11,3 +11,22 @@ type sysfs_spi, fs_type, sysfs_type;
+ type camera_socket, file_type, core_data_file_type, data_file_type;
+ type wcnss_prop, property_type;
+ type cnd_core_data_file, file_type, core_data_file_type, data_file_type;
++
++# /metadata is a tmpfs here (no metadata partition). The platform labels its subdirectories with
++# these types from file_contexts; a type may only live on tmpfs if it is allowed to associate.
++allow {
++  metadata_file
++  vold_metadata_file
++  password_slot_metadata_file
++  metadata_bootstat_file
++  ota_metadata_file
++  watchdog_metadata_file
++  apex_metadata_file
++  staged_install_file
++  userspace_reboot_metadata_file
++  repair_mode_metadata_file
++  gsi_metadata_file
++  gsi_public_metadata_file
++  aconfig_storage_metadata_file
++  aconfig_storage_flags_metadata_file
++} tmpfs:filesystem associate;
