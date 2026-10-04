@@ -41,6 +41,10 @@ with `fastboot flash boot boot-magisk.img` (the ROM install rewrites boot).
 - **four HALs on AIDL** (24.0 removed their HIDL interfaces): lights and fingerprint use the generic
   Lineage services, LiveDisplay uses `vendor.lineage.livedisplay-service.sdm`, and IR keeps a device
   implementation ported to AIDL because its blaster is a UART behind `libcir_driver`, not a LIRC node.
+- **160px status bar everywhere** (device patch 0023, untested on hardware): msm8996-common's 32dp
+  `status_bar_height` override is gone, so the framework's portrait value (the 160px cutout strip)
+  reaches SystemUI. 24.0 sizes the expanded-QS header rows from that dimen; at 32dp the clock/date
+  row started inside the strip and the clock drew under the camera.
 
 Dirty flash (same branch, keep data): skip *Format data* and just sideload.
 
