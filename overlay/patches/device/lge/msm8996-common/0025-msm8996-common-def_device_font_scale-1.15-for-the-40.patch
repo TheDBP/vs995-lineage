@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 14:02:54 -0400
+Subject: [PATCH 25/25] msm8996-common: def_device_font_scale 1.15 for the 400
+ dpi panel
+
+Since settings version 224 SettingsProvider seeds Settings.System.FONT_SCALE from
+R.dimen.def_device_font_scale (handleDefaultFontScale) and records it as
+DEFAULT_DEVICE_FONT_SCALE for "Reset settings", so the device overlay is the whole change; no
+framework patch is needed on this branch. 400 dpi buys 576 dp of width at the cost of physically
+small text on 5.7 inches; 1.15 is the second step of the SettingsLib ladder so it stays a normal,
+movable selection in Settings. Only fresh data picks it up: an existing /data already past
+version 224 keeps its font_scale.
+
+---
+ .../base/packages/SettingsProvider/res/values/defaults.xml | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml b/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
+index dd46637c..220c4500 100644
+--- a/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
++++ b/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
+@@ -21,4 +21,11 @@
+     <bool name="def_screen_brightness_automatic_mode">true</bool>
+     <!-- Default screen brightness, from 0 to 255. 87 is 34%. -->
+     <integer name="def_screen_brightness">53</integer>
++
++    <!-- Text one notch up, to compensate for shipping the panel at 400 dpi. That reports this
++         1440x2560 screen as 576 dp wide, which is the room dense layouts need but leaves text
++         physically small on 5.7 inches. 1.15 is the second step of the SettingsLib ladder
++         (0.85 / 1.0 / 1.15 / 1.30), so Settings shows it as a normal selection the user can move
++         either way. Applied by SettingsProvider's handleDefaultFontScale on fresh data only. -->
++    <item name="def_device_font_scale" format="float" type="dimen">1.15</item>
+ </resources>

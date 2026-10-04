@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 14:02:41 -0400
+Subject: [PATCH 24/25] msm8996-common: 400 dpi
+
+The V20's 5.7-inch 1440x2560 panel is 515 ppi; the upstream 560 reports it as 411 dp wide, the
+same layout as a 6-inch 1080p phone, and renders everything a size too large for the room the
+panel has. 400 reports it as 576 dp, the densest value that stays under the sw600dp breakpoint:
+at 320 (720 dp) the framework treats the phone as a tablet -- Launcher switches to the taskbar,
+the navigation buttons collapse into the bottom-right corner, Settings and SystemUI pick the
+sw600dp layouts -- which was tried live with `wm density 320` and is not a phone UI. 400 is not
+an exact resource bucket (xxhdpi is 480, so bitmaps scale down to 83%), but no value between 384
+and 480 is, and 480 gives back a third of the gain.
+
+The Display Size ladder SettingsLib builds from display_density_min_scale (70%) and
+_min_scale_interval (9%) recomputes around 400; its two smallest steps (280, 316) cross into
+tablet layouts, which is the user's choice to make in Settings.
+
+TARGET_RECOVERY_DENSITY is pinned because recovery derives its asset bucket from
+PRODUCT_AAPT_PREF_CONFIG and build/make/core/Makefile splits xxxhdpi at >= 560; without the pin
+400dpi would silently drop recovery to xxhdpi artwork.
+
+---
+ BoardConfigCommon.mk | 4 ++++
+ msm8996.mk           | 2 +-
+ vendor_prop.mk       | 2 +-
+ 3 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index e8ccf5c2..05a37e55 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -98,6 +98,10 @@ USE_CAMERA_STUB := true
+ # composer@2.1-service aborts "gralloc-mapper is missing" and surfaceflinger with it.
+ $(call soong_config_set_bool,libui,legacy_gralloc,true)
+ MAX_VIRTUAL_DISPLAY_DIMENSION := 4096
++# Recovery derives its asset bucket from PRODUCT_AAPT_PREF_CONFIG when TARGET_SCREEN_DENSITY is
++# unset, and build/make/core/Makefile splits xxxhdpi at >= 560: without the pin, 400dpi would
++# silently drop recovery to xxhdpi artwork on a panel that has not changed.
++TARGET_RECOVERY_DENSITY := xxxhdpi
+ TARGET_CONTINUOUS_SPLASH_ENABLED := true
+ TARGET_FORCE_HWC_FOR_VIRTUAL_DISPLAYS := true
+ 
+diff --git a/msm8996.mk b/msm8996.mk
+index 674d8881..c26ec9a3 100644
+--- a/msm8996.mk
++++ b/msm8996.mk
+@@ -28,7 +28,7 @@ PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := false
+ 
+ # AAPT
+ PRODUCT_AAPT_CONFIG := normal
+-PRODUCT_AAPT_PREF_CONFIG := 560dpi
++PRODUCT_AAPT_PREF_CONFIG := 400dpi
+ 
+ # Audio
+ PRODUCT_PACKAGES += \
+diff --git a/vendor_prop.mk b/vendor_prop.mk
+index bf2569ec..e80f4386 100644
+--- a/vendor_prop.mk
++++ b/vendor_prop.mk
+@@ -95,7 +95,7 @@ PRODUCT_PROPERTY_OVERRIDES += \
+ # Display
+ PRODUCT_PROPERTY_OVERRIDES += \
+     ro.qualcomm.cabl=0 \
+-    ro.sf.lcd_density=560 \
++    ro.sf.lcd_density=400 \
+     debug.stagefright.ccodec=1 \
+     vendor.display.disable_scaler=1
+ 
