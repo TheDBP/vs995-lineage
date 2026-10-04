@@ -45,8 +45,8 @@ with `fastboot flash boot boot-magisk.img` (the ROM install rewrites boot).
   `status_bar_height` override is gone, so the framework's portrait value (the 160px cutout strip)
   reaches SystemUI. 24.0 sizes the expanded-QS header rows from that dimen; at 32dp the clock/date
   row started inside the strip and the clock drew under the camera.
-- **400 dpi, text 1.15×** (device patches 0024/0025, verified build 18): 576 dp wide instead
-  of 411. Not 320: at 720 dp the phone crosses `sw600dp` and becomes a tablet (taskbar, corner nav
+- **420 dpi, text 1.15×** (device patches 0024/0025; 400 verified build 18, raised to 420 as a
+  notch too small, in build 20): 548 dp wide instead of 411. Not 320: at 720 dp the phone crosses `sw600dp` and becomes a tablet (taskbar, corner nav
   buttons), tried live with `wm density 320`. The font scale is `def_device_font_scale`, applied
   by SettingsProvider on fresh data only — a dirty flash keeps the old `font_scale`.
 - **mobile data on a DirtySanta phone** (kernel patch 0006, verified build 19): the US996
