@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 15:34:19 -0400
+Subject: [PATCH] SystemServiceRegistry: report each missing system service
+ once
+
+onServiceNotFound() wtf()s for every failed lookup made by a system-uid
+process. A wtf re-enters ActivityManagerService, which records it with
+
+    dbox = mContext.getSystemService(DropBoxManager.class);
+
+and while DropBoxManagerService is not published yet that lookup fails
+too -- landing back in onServiceNotFound(), which wtf()s again, which AMS
+records the same way. AMS already guards its own half ("Bail early if not
+published yet", try/catch plus a null check), but the wtf is emitted as a
+side effect inside the lookup, before AMS ever gets to catch anything, so
+the guard cannot break the cycle.
+
+It needs one wtf before DropBox is up to start. On this device
+DisplayManagerService.getStoredUserPreferredModeLocked() asks for
+UserManager during display setup, before UserManagerService publishes
+"user" -- four genuine misses, which then became 189514 wtfs in a single
+boot. AMS's handler saturated, so system_server never got as far as
+startOtherServices to register DropBox, which would have ended the loop;
+the watchdog killed it at 66s with "Blocked in handler on main thread",
+and init rebooted after the fourth zygote death. Every boot.
+
+Report each distinct missing service once and log a warning thereafter.
+The first occurrence still gets the full wtf with its stack, so nothing
+that made this diagnosable is lost.
+
+---
+ .../android/app/SystemServiceRegistry.java    | 20 ++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/core/java/android/app/SystemServiceRegistry.java b/core/java/android/app/SystemServiceRegistry.java
+index cc0e7b5cb7fa..7089f0fe9acd 100644
+--- a/core/java/android/app/SystemServiceRegistry.java
++++ b/core/java/android/app/SystemServiceRegistry.java
+@@ -336,8 +336,11 @@ import com.android.internal.telecom.TelecomDependencies;
+ import com.android.internal.util.Preconditions;
+ import com.android.modules.utils.ravenwood.RavenwoodHelper;
+ 
++import java.util.Collections;
++import java.util.HashSet;
+ import java.util.Map;
+ import java.util.Objects;
++import java.util.Set;
+ 
+ /**
+  * Manages all of the system services that can be returned by {@link Context#getSystemService}.
+@@ -2895,10 +2898,25 @@ public final class SystemServiceRegistry {
+         // We're mostly interested in tracking down long-lived core system
+         // components that might stumble if they obtain bad references; just
+         // emit a tidy log message for normal apps
+-        if (android.os.Process.myUid() < android.os.Process.FIRST_APPLICATION_UID) {
++        //
++        // lineage-24.0: report each missing service once. A Log.wtf here re-enters
++        // ActivityManagerService, which records the report through
++        // getSystemService(DropBoxManager.class) -- and while DropBoxManagerService is not
++        // published yet that lookup lands back here and wtf()s again, which AMS records the same
++        // way. On this device four genuine misses (DisplayManagerService asking for UserManager
++        // during display setup, before UserManagerService publishes) turned into 189514 wtfs,
++        // saturating AMS's handler so system_server never reached startOtherServices to register
++        // DropBox, and the watchdog killed it at 66s, every boot. Capping the wtf keeps the
++        // diagnostic for the first occurrence and stops the feedback loop.
++        if (android.os.Process.myUid() < android.os.Process.FIRST_APPLICATION_UID
++                && sReportedMissingServices.add(e.getMessage())) {
+             Log.wtf(TAG, e.getMessage(), e);
+         } else {
+             Log.w(TAG, e.getMessage());
+         }
+     }
++
++    /** lineage-24.0: messages already reported by {@link #onServiceNotFound}. @hide */
++    private static final Set<String> sReportedMissingServices =
++            Collections.synchronizedSet(new HashSet<>());
+ }

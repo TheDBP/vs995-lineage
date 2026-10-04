@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 17:27:26 -0400
+Subject: [PATCH] libmeminfo: check the GPU mem map is pinned before opening it
+
+ReadPerProcessGpuMem() and ReadProcessGpuUsageKb() both open
+/sys/fs/bpf/map_gpuMem_gpu_mem_total_map and then handle failure:
+
+    auto map = bpf::BpfMapRO<uint64_t, uint64_t>(kBpfGpuMemTotalMap);
+    if (!map.isValid()) {
+        LOG(ERROR) << "Can't open file: " << kBpfGpuMemTotalMap;
+        return false;
+    }
+
+That check can never run. BpfMapRO's constructor calls
+abortOnMismatch(), which Abort()s the process when the fd is not valid,
+so a missing map kills the caller before isValid() is reached.
+
+It is missing on this device. gpuMem.bpf contains one program,
+tracepoint/gpu_mem/gpu_mem_total, and this 4.9 kernel has no gpu_mem
+tracepoint, so libbpf fails the whole object --
+
+  libbpf: prog 'tracepoint_gpu_mem_gpu_mem_total': failed to load: -22
+  libbpf: failed to load object '/system/etc/bpf/gpuMem.bpf'
+
+-- and pins none of its maps, the HASH gpu_mem_total_map included. The
+abort then lands in system_server, reached from
+MemInfoReader.getGpuKernelUsedSizeKb() through
+AppProfiler$CachedAppsWatermarkData.update(), so zygote follows it and
+init reboots after the fourth death.
+
+Check the pin path first and take the graceful path these functions
+already have.
+
+---
+ sysmeminfo.cpp | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/sysmeminfo.cpp b/sysmeminfo.cpp
+index c014987..c533ea6 100644
+--- a/sysmeminfo.cpp
++++ b/sysmeminfo.cpp
+@@ -415,6 +415,18 @@ bool ReadPerProcessGpuMem([[maybe_unused]] std::unordered_map<uint32_t, uint64_t
+ #if defined(__ANDROID__) && !defined(__ANDROID_APEX__) && !defined(__ANDROID_VNDK__)
+     static constexpr const char kBpfGpuMemTotalMap[] = "/sys/fs/bpf/map_gpuMem_gpu_mem_total_map";
+ 
++    // lineage-24.0: BpfMapRO's constructor calls abortOnMismatch(), which Abort()s the process
++    // when the map is not pinned -- so the isValid() check below can never run. gpuMem.bpf does
++    // not load on this device ("prog 'tracepoint_gpu_mem_gpu_mem_total': failed to load: -22";
++    // the 4.9 kernel has no gpu_mem tracepoint) and libbpf pins nothing when an object fails, so
++    // system_server aborted here on every boot, out of
++    // MemInfoReader.getGpuKernelUsedSizeKb() via AppProfiler. Check first and take the graceful
++    // path this function already has.
++    if (access(kBpfGpuMemTotalMap, F_OK) != 0) {
++        LOG(ERROR) << "Can't open file: " << kBpfGpuMemTotalMap;
++        return false;
++    }
++
+     // Use the read-only wrapper BpfMapRO to properly retrieve the read-only map.
+     auto map = bpf::BpfMapRO<uint64_t, uint64_t>(kBpfGpuMemTotalMap);
+     if (!map.isValid()) {
+@@ -469,6 +481,18 @@ bool ReadProcessGpuUsageKb([[maybe_unused]] uint32_t pid, [[maybe_unused]] uint3
+     // BPF Key [32-bits GPU ID | 32-bits PID]
+     uint64_t kBpfKeyGpuUsage = ((uint64_t)gpu_id << 32) | pid;
+ 
++    // lineage-24.0: BpfMapRO's constructor calls abortOnMismatch(), which Abort()s the process
++    // when the map is not pinned -- so the isValid() check below can never run. gpuMem.bpf does
++    // not load on this device ("prog 'tracepoint_gpu_mem_gpu_mem_total': failed to load: -22";
++    // the 4.9 kernel has no gpu_mem tracepoint) and libbpf pins nothing when an object fails, so
++    // system_server aborted here on every boot, out of
++    // MemInfoReader.getGpuKernelUsedSizeKb() via AppProfiler. Check first and take the graceful
++    // path this function already has.
++    if (access(kBpfGpuMemTotalMap, F_OK) != 0) {
++        LOG(ERROR) << "Can't open file: " << kBpfGpuMemTotalMap;
++        return false;
++    }
++
+     // Use the read-only wrapper BpfMapRO to properly retrieve the read-only map.
+     auto map = bpf::BpfMapRO<uint64_t, uint64_t>(kBpfGpuMemTotalMap);
+     if (!map.isValid()) {
