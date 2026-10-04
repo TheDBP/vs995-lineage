@@ -137,7 +137,7 @@ dry run that reaches the misc write leaves a slot that reads like a real boot; z
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The eight things that stopped 24.0 booting on this kernel
+### The nine things that stopped 24.0 booting on this kernel
 
 With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
 wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6). With 1-7
@@ -193,7 +193,15 @@ and the three platform patches below the system boots ENFORCING (2026-10-04, bui
    carry `system/vendor/...`); the subtree is `vendor_file`, system_server dies in
    PackageManagerService with `Unable to load SELinux MMAC policy`, zygote restarts every ~5 s
    behind a boot animation that never ends. `overlay/patches/system/sepolicy/0001` adds the
-   alternative to every odm rule (build 13).
+   alternative to every odm rule (build 13: labels right, system_server past PackageManager).
+9. **The IR HAL has no SELinux domain.** Device patch 0003 renamed the binary to
+   `android.hardware.ir-service.lge` but left `sepolicy/vendor/file_contexts` on the old
+   `ir@1.0-service.lge` name, so the binary is `vendor_file`; init never starts a service it
+   cannot find a domain for, the VINTF fragment still declares `IConsumerIr/default`, and
+   `ConsumerIrService` blocks system_server's main thread in `waitForDeclaredService` until the
+   Watchdog kills it (`*** GOODBYE!`, every ~105 s, boot animation forever). Fixed inside 0003.
+   Check every `service` line's binary against the image before flashing:
+   `forge/tools/check-service-domains.sh <system.img>`.
 
 Three platform patches taken from bonito once adb was alive, all confirmed in build 12:
 `hardware/interfaces` libhealthloop (`filterPowerSupplyEvents.o` needs a 5.3 loop verifier;
@@ -213,6 +221,10 @@ its `reboot()` only kills the sandbox. It runs the whole `selinux_setup` stage (
 enforcing, restorecon) and sets the live kernel enforcing -- `setenforce 0` afterwards.
 
 ## Recovery adb: use Enable ADB in the menu
+
+Unattended reflash from a running system: `adb reboot sideload-auto-reboot` -- this recovery
+honours that BCB argument (it ignores `--wipe_data` given the same way), `adb devices` shows
+`sideload` ~50 s later, `adb sideload <zip>` installs and reboots with no menu interaction.
 
 22.2 recovery ships `ro.adb.secure=1`, so adb is `unauthorized` until someone selects
 **Advanced -> Enable ADB** on the screen; after that it is a root shell. Booting it without someone
