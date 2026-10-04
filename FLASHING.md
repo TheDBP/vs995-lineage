@@ -137,7 +137,7 @@ dry run that reaches the misc write leaves a slot that reads like a real boot; z
 must run in the same `fakeroot sh -c`, or the nodes become empty regular files and `dd` to
 `/dev/misc` "succeeds" into the ramfs. Check the archive with `cpio -tv`.
 
-### The eleven things that stopped 24.0 booting on this kernel
+### The twelve things that stopped 24.0 booting on this kernel
 
 With 1-5 fixed the system boots on this kernel (2026-10-03, `androidboot.selinux=permissive` on the
 wrap image): sdk 37, vold up, adbd `device` at ~110 s, display stuck on the LG logo (6). With 1-7
@@ -231,6 +231,23 @@ and the three platform patches below the system boots ENFORCING (2026-10-04, bui
    overrides, bootstat, watchdog state. The unused `encrypt` partition (sda10, labelled
    `metadata_block_device` already) is the persistent alternative if that ever matters. Static
    check before flashing: the root of `system.img` must contain `metadata`. Goes in build 15.
+
+12. **lmkd cannot start, so every oom-adj update stalls 3 s, so the network stack ANRs and
+   system_server dies.** Android 17's lmkd knows two pressure sources only: PSI, or the in-kernel
+   `lowmemorykiller` module; the vmpressure/memcg-v1 path 22.2 fell back to is gone, and 24.0's
+   `cgroups.json` puts the memory controller in cgroup2. This kernel has no PSI
+   (no `/proc/pressure`) and the stock defconfig left `CONFIG_ANDROID_LOW_MEMORY_KILLER` unset, so
+   lmkd logs `Old kill strategy can only be used with v1 cgroup hierarchy` / `Failed to initialize
+   PSI monitors` and exits; init restarts it forever and `/dev/socket/lmkd` never appears.
+   `ProcessList.writeLmkd()` then waits 3 s per call under the AMS lock ("Failed to connect to lmkd,
+   retry after 1000 ms"), ANRs pile up (systemui, phone, nfc, TelecomService 24 s), the network
+   stack is killed for its ANR and system_server dies with `IllegalStateException: Lost network
+   stack` every ~80 s (build 15). Fix (kernel patch 0005): `CONFIG_ANDROID_LOW_MEMORY_KILLER=y`
+   in `lge_msm8996_defconfig`; lmkd sees `/sys/module/lowmemorykiller/parameters/minfree` and uses
+   the in-kernel interface. Static check: `CONFIG_ANDROID_LOW_MEMORY_KILLER=y` in the built
+   kernel `.config` (`/proc/config.gz` on the device). Known residue: after `dev.bootcomplete` AMS
+   sends `LMK_START_MONITORING`, which in in-kernel mode makes lmkd exit once ("Failure to
+   initialize monitoring"); init restarts it and it stays up. Goes in build 16.
 
 Three platform patches taken from bonito once adb was alive, all confirmed in build 12:
 `hardware/interfaces` libhealthloop (`filterPowerSupplyEvents.o` needs a 5.3 loop verifier;

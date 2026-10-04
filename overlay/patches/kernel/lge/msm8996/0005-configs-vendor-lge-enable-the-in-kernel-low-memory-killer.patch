@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 08:40:01 -0400
+Subject: [PATCH] configs: vendor: lge: enable the in-kernel low memory killer
+ for Android 17's lmkd
+
+Android 17's lmkd only knows two memory-pressure sources: PSI, or the
+in-kernel lowmemorykiller module. The vmpressure/memcg fallback that
+older lmkd used on 4.4 kernels is gone, and cgroups.json now puts the
+memory controller in cgroup2, so lmkd dies on startup:
+
+  lowmemorykiller: Old kill strategy can only be used with v1 cgroup hierarchy
+  lowmemorykiller: Failed to initialize PSI monitors
+  lowmemorykiller: exiting
+
+init restarts it forever and /dev/socket/lmkd never appears. Every
+ProcessList.writeLmkd() in system_server then blocks 3 s waiting for the
+socket while holding the AMS lock, which ANRs systemui, phone, nfc and
+the network stack; the network stack death becomes
+"IllegalStateException: Lost network stack" and system_server is killed
+every ~80 s.
+
+This kernel has no PSI (no kernel/sched/psi.c), but it does ship
+drivers/staging/android/lowmemorykiller.c. With the module built in,
+lmkd finds /sys/module/lowmemorykiller/parameters/minfree, switches to
+its in-kernel interface and never touches PSI or memcg.
+
+---
+ arch/arm64/configs/vendor/lge/lge_msm8996_defconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/vendor/lge/lge_msm8996_defconfig b/arch/arm64/configs/vendor/lge/lge_msm8996_defconfig
+index 6e1fe9f6240a..3d29d4a9a0d7 100644
+--- a/arch/arm64/configs/vendor/lge/lge_msm8996_defconfig
++++ b/arch/arm64/configs/vendor/lge/lge_msm8996_defconfig
+@@ -844,7 +844,7 @@ CONFIG_SLIMBUS=y
+ CONFIG_MFD_H1_DSV=y
+ CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+ # CONFIG_CPU_FREQ_TIMES is not set
+-# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set
++CONFIG_ANDROID_LOW_MEMORY_KILLER=y
+ # CONFIG_ESOC is not set
+ CONFIG_BONDING=y
+ # CONFIG_MSM_MHI is not set
