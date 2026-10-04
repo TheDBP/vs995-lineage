@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 01:57:48 -0400
+Subject: [PATCH] file_contexts: label /system/vendor/odm like /vendor/odm
+
+When vendor is built into the system image (TARGET_COPY_OUT_VENDOR =
+system/vendor, /vendor -> /system/vendor), the odm files land in the
+image at /system/vendor/odm/... and the image builder labels them by
+that path. Every odm rule here only knows /odm and /vendor/odm, so the
+whole subtree falls through to the /(vendor|system/vendor)(/.*)? rule
+and becomes vendor_file. Enforcing, nothing may read it:
+
+  avc: denied { read } for comm="system_server"
+      name="odm_mac_permissions.xml" dev="sda18"
+      scontext=u:r:system_server:s0 tcontext=u:object_r:vendor_file:s0
+  SELinuxMMAC: Exception parsing /odm/etc/selinux/odm_mac_permissions.xml
+  RuntimeException: Unable to load SELinux MMAC policy
+      at PackageManagerService.<init>
+
+and zygote, init, servicemanager, hwservicemanager and vold are denied
+odm_seapp_contexts, odm_file_contexts, odm_service_contexts and
+odm_hwservice_contexts the same way.
+
+Add the system/vendor/odm alternative to every odm rule, which is what
+the odm_dlkm rules already do.
+
+---
+ private/file_contexts | 54 +++++++++++++++++++++----------------------
+ 1 file changed, 27 insertions(+), 27 deletions(-)
+
+diff --git a/private/file_contexts b/private/file_contexts
+index 56977a1e9..d1d7ed909 100644
+--- a/private/file_contexts
++++ b/private/file_contexts
+@@ -471,30 +471,30 @@
+ #############################
+ # OEM and ODM files
+ #
+-/(odm|vendor/odm)(/.*)?                       u:object_r:vendor_file:s0
+-/(odm|vendor/odm)/lib(64)?/egl(/.*)?          u:object_r:same_process_hal_file:s0
+-/(odm|vendor/odm)/lib(64)?/hw                 u:object_r:vendor_hal_file:s0
+-/(odm|vendor/odm)/lib(64)?/vndk-sp(/.*)?      u:object_r:vndk_sp_file:s0
+-/(odm|vendor/odm)/bin/sh                      u:object_r:vendor_shell_exec:s0
+-/(odm|vendor/odm)/etc(/.*)?                   u:object_r:vendor_configs_file:s0
+-/(odm|vendor/odm)/app(/.*)?                   u:object_r:vendor_app_file:s0
+-/(odm|vendor/odm)/priv-app(/.*)?              u:object_r:vendor_app_file:s0
+-/(odm|vendor/odm)/overlay(/.*)?               u:object_r:vendor_overlay_file:s0
+-/(odm|vendor/odm)/framework(/.*)?             u:object_r:vendor_framework_file:s0
++/(odm|vendor/odm|system/vendor/odm)(/.*)?                       u:object_r:vendor_file:s0
++/(odm|vendor/odm|system/vendor/odm)/lib(64)?/egl(/.*)?          u:object_r:same_process_hal_file:s0
++/(odm|vendor/odm|system/vendor/odm)/lib(64)?/hw                 u:object_r:vendor_hal_file:s0
++/(odm|vendor/odm|system/vendor/odm)/lib(64)?/vndk-sp(/.*)?      u:object_r:vndk_sp_file:s0
++/(odm|vendor/odm|system/vendor/odm)/bin/sh                      u:object_r:vendor_shell_exec:s0
++/(odm|vendor/odm|system/vendor/odm)/etc(/.*)?                   u:object_r:vendor_configs_file:s0
++/(odm|vendor/odm|system/vendor/odm)/app(/.*)?                   u:object_r:vendor_app_file:s0
++/(odm|vendor/odm|system/vendor/odm)/priv-app(/.*)?              u:object_r:vendor_app_file:s0
++/(odm|vendor/odm|system/vendor/odm)/overlay(/.*)?               u:object_r:vendor_overlay_file:s0
++/(odm|vendor/odm|system/vendor/odm)/framework(/.*)?             u:object_r:vendor_framework_file:s0
+ 
+ # secure-element service: vendor uuid mapping config file
+-/(odm|vendor/odm|vendor|system/vendor)/etc/hal_uuid_map_(.*)?\.xml    u:object_r:vendor_uuid_mapping_config_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/etc/hal_uuid_map_(.*)?\.xml    u:object_r:vendor_uuid_mapping_config_file:s0
+ 
+ # APEX packages
+-/(odm|vendor/odm|vendor|system/vendor)/apex(/[^/]+){0,2}              u:object_r:vendor_apex_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/apex(/[^/]+){0,2}              u:object_r:vendor_apex_file:s0
+ 
+ # Input configuration
+-/(odm|vendor/odm|vendor|system/vendor)/usr/keylayout(/.*)?            u:object_r:vendor_keylayout_file:s0
+-/(odm|vendor/odm|vendor|system/vendor)/usr/keylayout(/.*)?\.kl        u:object_r:vendor_keylayout_file:s0
+-/(odm|vendor/odm|vendor|system/vendor)/usr/keychars(/.*)?             u:object_r:vendor_keychars_file:s0
+-/(odm|vendor/odm|vendor|system/vendor)/usr/keychars(/.*)?\.kcm        u:object_r:vendor_keychars_file:s0
+-/(odm|vendor/odm|vendor|system/vendor)/usr/idc(/.*)?                  u:object_r:vendor_idc_file:s0
+-/(odm|vendor/odm|vendor|system/vendor)/usr/idc(/.*)?\.idc             u:object_r:vendor_idc_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/usr/keylayout(/.*)?            u:object_r:vendor_keylayout_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/usr/keylayout(/.*)?\.kl        u:object_r:vendor_keylayout_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/usr/keychars(/.*)?             u:object_r:vendor_keychars_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/usr/keychars(/.*)?\.kcm        u:object_r:vendor_keychars_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/usr/idc(/.*)?                  u:object_r:vendor_idc_file:s0
++/(odm|vendor/odm|system/vendor/odm|vendor|system/vendor)/usr/idc(/.*)?\.idc             u:object_r:vendor_idc_file:s0
+ 
+ /oem(/.*)?              u:object_r:oemfs:s0
+ /oem/overlay(/.*)?      u:object_r:vendor_overlay_file:s0
+@@ -507,15 +507,15 @@
+ /odm/etc/selinux/precompiled_sepolicy                           u:object_r:sepolicy_file:s0
+ /odm/etc/selinux/precompiled_sepolicy\.plat_and_mapping\.sha256 u:object_r:sepolicy_file:s0
+ 
+-/(odm|vendor/odm)/etc/selinux/odm_sepolicy\.cil                 u:object_r:sepolicy_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_file_contexts                 u:object_r:file_contexts_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_seapp_contexts                u:object_r:seapp_contexts_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_property_contexts             u:object_r:property_contexts_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_service_contexts              u:object_r:vendor_service_contexts_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_hwservice_contexts            u:object_r:hwservice_contexts_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_keystore2_key_contexts        u:object_r:keystore2_key_contexts_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_mac_permissions\.xml          u:object_r:mac_perms_file:s0
+-/(odm|vendor/odm)/etc/selinux/odm_tee_service_contexts          u:object_r:tee_service_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_sepolicy\.cil                 u:object_r:sepolicy_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_file_contexts                 u:object_r:file_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_seapp_contexts                u:object_r:seapp_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_property_contexts             u:object_r:property_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_service_contexts              u:object_r:vendor_service_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_hwservice_contexts            u:object_r:hwservice_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_keystore2_key_contexts        u:object_r:keystore2_key_contexts_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_mac_permissions\.xml          u:object_r:mac_perms_file:s0
++/(odm|vendor/odm|system/vendor/odm)/etc/selinux/odm_tee_service_contexts          u:object_r:tee_service_contexts_file:s0
+ 
+ #############################
+ # Product files
