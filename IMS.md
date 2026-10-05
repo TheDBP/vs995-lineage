@@ -459,7 +459,7 @@ vtsurface_shim.cpp`, `nanopb-0.2.8/`. Re-run `abi-gap.sh` per blob on A17 (the
 nanopb delta and Surface sizeof will differ or not apply -- LG's stack differs
 from QTI's).
 
-## Flash A status (2026-10-05): com.lge.ims runs and registers "ims"
+## Flash A status (2026-10-05): com.lge.ims SIP-REGISTERS on T-Mobile (200 OK, IPsec up)
 
 Verified on device (pushed artifacts, then banked as patches 0029-0031):
 `com.lge.ims` stable (no native/Java crash through a 90 s soak), native engine
@@ -507,7 +507,119 @@ Fixes it took, in order hit:
   `__lgims_log_nullfmt` (same length) + `add-needed libimscompat.so`; the shim
   pulls the format from the varargs when fmt is NULL.
 
+- **APN block = verify-stub enum trap** (first thing after the engine came up:
+  `DCApn` never requested the IMS PDN). `LGPhoneConstants$LteStateInfo` /
+  `LGDataPhoneConstants$LteStateInfo` were plain verify stubs; `Enum.valueOf()`
+  on them throws, the catch path reports "LTE emergency only" and the APN gate
+  stays shut. Faithful enums (extra-smali, all stock constants) fix it. Rule:
+  anything whose *values* are read (enums, constants) needs a faithful copy,
+  verify stubs only satisfy the linker.
+- **`TelephonyManager.getPcscfAddress[ForSubscriber]` gone** (NoSuchMethodError on
+  the ConnectivityThread the moment the IMS PDN came up -- hidden behind the APN
+  gate until then). `method-redirects.txt` rule `|static` -> `com.lge.ims.compat.
+  TelephonyCompat` (`ims/compat-java`, compiled against the `system` stub jar, merged
+  into the dex) reads `LinkProperties.getPcscfServers()` off the NET_CAPABILITY_IMS
+  network. Verified: 3 P-CSCF v6 addresses -> `AoSPCSCF AddPCSCF`, `AoSConnector
+  STATE_IDLE -> STATE_READY`, `Connection_Activated`.
+- **ISIM state: `com.lge.ims.phone` (IIMSPhone) is absent** -> `SIMStateAgent.
+  getIsimStateFromPhone()` "NOT_PRESENT" -> "ISIM is disabled on INIT", IMPI
+  `anonymous@anonymous.invalid`, AoS blocks with `SUBSCRIBERINCOMPLETED` (the last
+  of AOSINCOMPLETED/OUTOFSERVICE/SERVICECONNECTING/SUBSCRIBERINCOMPLETED). Stock
+  item 0x19 is `LGImsIsimHandler.getIsimState()` (UiccController APPTYPE_ISIM ->
+  LOADED/NOT_READY/NOT_PRESENT, plus sticky `com.lge.ims.ISIM_STATE_CHANGED`
+  broadcast, extras `isimState`/`subscription`/`phone`). Redirected to
+  `TelephonyCompat.getIsimStateFromPhone`: LOADED <=> IMPI readable; NOT_READY
+  re-checks on the main looper and sends that same broadcast in-process. Plus
+  `|static` rules for LG's `getIsim*ForSubscriber` and the pre-O
+  `getIsimChallengeResponse` -> `getIccAuthentication(APPTYPE_ISIM, AUTHTYPE_EAP_AKA)`
+  (same call Ims4's own MTK branch makes). The SIM does carry an ISIM app
+  (`UiccCardApplication ... APPTYPE_ISIM,APPSTATE_READY`).
+- **Operator profile**: `pref_operator` resolves VZW from the stub `Build$CA_TARGET`
+  while the test SIM is Mint (T-Mobile MVNO); the VZW profile REGISTERed against
+  `msg.pc.t-mobile.com` and got `421 Extension Required, Require: sec-agree`
+  (VZW profile sends no Security-Client). Hand-set for bringup:
+  `persist.lg.ims.pref_operator=TMO`, `persist.lg.ims.pref_country=US`,
+  `net.ims.debug=1`. TMO-profile LGIMS logs are masked unless
+  `persist.service.privacy.enable=1`. Both still to be build-produced (CA_TARGET
+  from the SIM / `ro.build.target_operator`).
+- **Restart only by reboot**: `kill`/`force-stop` of com.lge.ims races VoLTEService
+  against DCGov (NPE) and gives false negatives. `deploy-lte.sh` swaps the apk
+  across two reboots (see `rom-forge/tools/push-system-app.sh`).
+- `TelephonyManager.setCellInfoListRate(int)` is gone -> `|drop` rule.
+- **IIMSPhone (`com.lge.ims.phone`) stand-in**: `IIMSPhone$Stub.asInterface` is
+  redirected to `com.lge.ims.compat.ImsPhoneCompat` (in-process object, never a
+  null phone). Item table and sources are in its javadoc; the one that matters for
+  registration is **item 8 = VoPS**: `BootupGov.notifyVOPSState` ->
+  `SystemInterface.notifyEvent(0x800 IMS_VOICE_OVER_PS_STATE)`, and libims
+  `AoSServiceAvailableCellular::CheckNetworkType` sets BOTH `NONETWORK` (0x80000)
+  and `VOPS` (0x40000) when RAT==LTE and VoPS==false -- "NONETWORK" there does
+  not mean no network. Answered from `NetworkRegistrationInfo(PS, WWAN).
+  getDataSpecificInfo().getVopsSupportInfo()`.
+- **VoPS timing + second enum trap**: BootupGov polls item 8 only twice (1 s
+  apart) right after the IMS PDN; the framework says NOT_SUPPORTED then and flips
+  to SUPPORTED ~25-30 s after boot. Stock gets the late update from LG RIL's
+  `lge.intent.action.LTE_NETWORK_SUPPORTED_INFO` broadcast (int extras
+  `VoPS_Support`/`EPDN_Support`), which `DCNetWatcher.handleVoLTEEPSNetworkSupport`
+  compares as `LGDataPhoneConstants$VolteAndEPDNSupport.fromInt(v) == VOLTE_SUPPORT`
+  -- our verify stub's `fromInt` returned a fresh object, so it could never match.
+  Fixes: faithful enum (NONE 0, VOLTE_NOT_SUPPORT 1, VOLTE_SUPPORT 2,
+  EPDN_NOT_SUPPORT 3, EPDN_SUPPORT 4) + `ImsPhoneCompat.startVopsMonitor()`
+  (started from `setListener`) sends that broadcast sticky (DCNetWatcher registers
+  its filter after the bind) and on every `TelephonyCallback.ServiceStateListener`
+  change. Keep a strong reference to the TelephonyCallback: the registry stub
+  holds it weakly and a bare `new` listener is GC'd and goes silent.
+- **qcrild VoPS/LTE_CA flicker**: `libril-qc-hal-qmi` reports
+  `lteVopsInfo.isVopsSupported=true` only in DATA_REGISTRATION_STATE responses
+  with rat=14 (LTE); every rat=19 (LTE_CA) response says false, and the RAT flips
+  14<->19 around data activity (right as REGISTER goes out), so framework
+  VopsSupportInfo reads 2/3/2/3 and Ims4 aborted each REGISTER ~0.4 s after
+  `SendREGISTER`. VoPS is per tracking area and cannot change without a TAU, so
+  `ImsPhoneCompat.vops()` latches true while PS stays registered on LTE (reset on
+  leaving LTE / deregistration). A libril-side fix would be the proper place.
+
 Open, next:
+- **REGISTER / IPsec -- DONE (hand-pushed helpers; build-produced since patch
+  0033)**. The TMO profile REGISTERs with `Security-Client: ipsec-3gpp;alg=
+  hmac-md5-96/hmac-sha-1-96;prot=esp;mod=trans;ealg=null`, the P-CSCF answers
+  401 (`AKAv1-MD5`, `Security-Server ... port-c=65528;port-s=65529`), AoSIPSecHelper
+  builds 4 SAs + 6 SPs. libims does NOT program xfrm: `ipsec_inf.cpp` sends
+  text `SPADD/SAADD ... src dst secproto esp spi ... auth hmac-sha1 <key>` to
+  the proxy. Chain, all **ABSTRACT** AF_UNIX dgram sockets (`@/tmp/ims/socket/
+  ipsec_user` libims, `@.../ipsec_controller` `ipsecstarter`, `@.../ipsec_proxy`
+  `ipsecclient`; no /tmp dir exists or is needed -- ECONNREFUSED instead of
+  ENOENT with no path was the tell): libims binds ipsec_user -> UP to the starter
+  -> `ctl.start ipsecclient` -> client binds the proxy, acks to ipsec_user, then
+  installs SAs via netlink xfrm. **ipsecclient exits immediately if ipsec_user is
+  not bound**, so it is start-on-demand only (stock rc: `disabled`); never run it
+  by hand before Ims4 is up. Without the helpers: `IsActiveIPSecClient failed`,
+  `Pipe_Write send failed (111)`, `IPSEC ERROR --- nConf`, `add policy is
+  failed`, registration torn down + IMS PDN dropped, retried forever. With them:
+  authenticated REGISTER -> `200 OK` (`expires=3600`, P-Associated-URI x4,
+  Service-Route :65529), `STATE_REGISTERED`, `REASON_REGISTRATION_SUCCESS/
+  [REG_SUCCESS][VOLTE]`, `VoLTE_Indicator reg=1`, reg-event NOTIFY `active`.
+  Shipped as: `ims/Android.bp` `cc_prebuilt_binary` ipsecstarter/ipsecclient
+  (stock 32-bit, libc/libcutils/libc++ only, staged by build-ims4.sh step 7, not
+  committed), `ims/lge-ims-ipsec.rc` (stock service lines: starter uid system
+  net_admin/net_raw, client root disabled), `sepolicy/private/lge_ims_ipsec.te`
+  + `file_contexts` + `property_contexts` (`ctl.start$ipsecclient` ->
+  `ctl_ipsec_prop`, `system_internal_prop` because a coredomain may only set
+  system_property_type). `ipsecd` is the VoWiFi strongSwan daemon, unrelated.
+  Framework still shows no IMS registration (expected: Flash B).
+  Note `cc_prebuilt_binary` shared_libs must list `liblog` too: check_elf_file
+  resolves `__android_log_print` only against the listed libs (stock DT_NEEDED
+  reached it via libcutils).
+- **MT VoLTE call reaches the phone over SIP** (2026-10-05 17:03, 31 min after
+  REGISTER): network INVITE -> Ims4 `100 Trying`, `180 Ringing` (reliable, PRACK
+  received), `UCSession SendIncomingSession` to its 4 listeners; nothing reaches
+  Telecom (no InCallUI), so the network CANCELs after ~18 s (`Reason: SIP;cause=
+  480;text="CC_NOT_REACHABLE"`) -> `487`. Confirms the stack is live end to end;
+  surfacing the call is Flash B. Media-side error to track once calls are
+  bridged: `AudioAdaptor::GetIPAddrOfCP() Error[21]` / `MediaResourceMngr::
+  UpdateModemIPv6() failed for APNName[ims]` at INVITE time -- the RTP path
+  wants the modem-side IMS PDN address.
+- **IIMSPhone modem side**: `setSysInfo` / `setImsStatusToModem(IIII)` are logged
+  and dropped. `setImsStatusToModem` is how the modem learns IMS registered (CSFB
+  vs VoLTE routing) -- Flash B (ImsBridge) scope.
 - **SMS over IMS needs `imswmsproxy`** (not shipped yet). libimswms (`SoIClient::
   ConnectSC` -> `AndroidWMS::Init`) talks AF_UNIX/SOCK_DGRAM over ABSTRACT sockets:
   binds `@/tmp/ims/wms/wms_user_static` (or `wms_user`), sends to

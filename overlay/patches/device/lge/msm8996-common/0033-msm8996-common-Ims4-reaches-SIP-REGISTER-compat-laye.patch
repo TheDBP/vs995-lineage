@@ -1,0 +1,1254 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 16:48:23 -0400
+Subject: [PATCH] msm8996-common: Ims4 reaches SIP REGISTER -- compat layer for
+ removed telephony APIs, faithful LG enums, VoPS push
+
+compat-java/ (compiled against the system stubs, merged into the apk):
+- TelephonyCompat: static stand-ins for the removed TelephonyManager @hide
+  methods Ims4 calls (getPcscfAddress* from the IMS network's LinkProperties,
+  getIsim*ForSubscriber, getIsimChallengeResponse*), isLocationProviderEnabled
+  ForUser, and an in-process publisher of LG's sticky ISIM_STATE_CHANGED
+  (LGImsIsimHandler is absent, SIMStateAgent sat in SUBSCRIBERINCOMPLETED).
+- ImsPhoneCompat: in-process IIMSPhone stand-in (com.lge.ims.phone is not a
+  service here). Pushes VoPS to the engine the way LG RIL did: sticky
+  lge.intent.action.LTE_NETWORK_SUPPORTED_INFO with int VoPS_Support/
+  EPDN_Support from the PS WWAN NetworkRegistrationInfo's VopsSupportInfo.
+  Holds a strong ref to its TelephonyCallback (the registry only weak-refs it;
+  an unreferenced listener is GC'd and updates silently stop) and LATCHES VoPS
+  while PS stays registered on LTE: qcrild reports isVopsSupported=false on
+  every LTE_CA (rat 19) data-registration response, which flickered 2/3/2/3
+  around data activity and aborted REGISTER mid-flight.
+method-redirects.txt: the redirects above, setCellInfoListRate/
+notifyVoLteServiceStateChanged dropped, IIMSPhone$Stub.asInterface ->
+ImsPhoneCompat. smali-fixups.py: start the ISIM monitor from SIMStateAgent.
+extra-smali: LGPhoneConstants$LteStateInfo, LGDataPhoneConstants$LteStateInfo
+and $VolteAndEPDNSupport are faithful copies of the stock enums (names, codes,
+fromInt by code): the verify stubs returned one code for every constant, so
+"APN is blocked" and VoPS never cleared.
+build-ims4.sh: compile compat-java, merge com/lge/ims/compat, apply redirects
+with apply-method-redirects.py.
+
+Result on T-Mobile: IMS PDN up, VoPS true, REGISTER with Security-Client sent,
+401 AKAv1-MD5 challenge received. The IPsec helpers are the next commit.
+
+---
+ ims/build-ims4.sh                             |  15 +-
+ .../android/internal/telephony/IIMSPhone.java |  14 +
+ .../internal/telephony/ISysMonitor.java       |   7 +
+ .../com/lge/ims/compat/ImsPhoneCompat.java    | 207 +++++++++++++++
+ .../com/lge/ims/compat/TelephonyCompat.java   | 207 +++++++++++++++
+ .../LGPhoneConstants$LteStateInfo.smali       | 156 ++++++++++--
+ .../LGDataPhoneConstants$LteStateInfo.smali   | 165 +++++++++++-
+ ...taPhoneConstants$VolteAndEPDNSupport.smali | 241 +++++++++++++++++-
+ ims/method-redirects.txt                      |  25 ++
+ ims/smali-fixups.py                           |  20 +-
+ 10 files changed, 1003 insertions(+), 54 deletions(-)
+ create mode 100644 ims/compat-java/com/android/internal/telephony/IIMSPhone.java
+ create mode 100644 ims/compat-java/com/android/internal/telephony/ISysMonitor.java
+ create mode 100644 ims/compat-java/com/lge/ims/compat/ImsPhoneCompat.java
+ create mode 100644 ims/compat-java/com/lge/ims/compat/TelephonyCompat.java
+
+diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
+index 1fb8ed55..9e4ad188 100755
+--- a/ims/build-ims4.sh
++++ b/ims/build-ims4.sh
+@@ -35,7 +35,7 @@ T="$HERE/.work"; rm -rf "$T"; mkdir -p "$T"
+ S="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)}/src"   # HERE is <build_output>/src/device/lge/msm8996-common/ims
+ AIDL="$S/prebuilts/build-tools/linux-x86/bin/aidl"
+ JAVAC="$(for v in jdk21 jdk17 jdk11; do c="$S/prebuilts/jdk/$v/linux-x86/bin/javac"; [ -x "$c" ] && echo "$c" && break; done)"
+-AJAR="$S/prebuilts/sdk/current/public/android.jar"
++AJAR="$S/prebuilts/sdk/current/system/android.jar"   # system stubs: compat-java needs @SystemApi (LinkProperties.getPcscfServers)
+ R8="$S/prebuilts/r8/r8.jar"; BK="$S/prebuilts/extract-tools/common/smali/baksmali.jar"; SM="$S/prebuilts/extract-tools/common/smali/smali.jar"
+ 
+ echo ">> 1. deodex Ims4.apk + boot-ims-common"
+@@ -53,7 +53,8 @@ cp "$T"/aidl/internal/*.aidl "$T/aidlroot/com/lge/imslegacy/internal/" 2>/dev/nu
+ for j in "$HERE"/legacy-java/com/lge/imslegacy/*.java; do c=$(basename "$j" .java); printf 'package com.lge.imslegacy;\nparcelable %s;\n' "$c" > "$T/aidlroot/com/lge/imslegacy/$c.aidl"; done
+ INCL="-I$T/aidlroot -I$S/frameworks/base/core/java -I$S/frameworks/base/telecomm/java -I$S/frameworks/base/telephony/java -I$S/frameworks/base/telecomm/framework/aidl-export -I$S/frameworks/native/aidl/gui"
+ mkdir -p "$T/gen-java"; for a in $(find "$T/aidlroot" -name '*.aidl'); do grep -q '^interface' "$a" && "$AIDL" $INCL -o"$T/gen-java" "$a"; done
+-mkdir -p "$T/classes"; find "$T/gen-java" "$HERE/legacy-java" -name '*.java' > "$T/srcs.txt"
++# compat-java/: static reimplementations of removed @hide framework methods (see method-redirects.txt `static`)
++mkdir -p "$T/classes"; find "$T/gen-java" "$HERE/legacy-java" "$HERE/compat-java" -name '*.java' > "$T/srcs.txt"
+ "$JAVAC" --release 17 -cp "$AJAR" -d "$T/classes" @"$T/srcs.txt"
+ mkdir -p "$T/dex"; find "$T/classes" -name '*.class' > "$T/cls.txt"
+ java -cp "$R8" com.android.tools.r8.D8 --min-api 21 --lib "$AJAR" --output "$T/dex" @"$T/cls.txt"
+@@ -76,13 +77,7 @@ echo ">> 4. rename com.android.ims -> com.lge.imslegacy in Ims4 + merge the lega
+ python3 "$FORGE/tools/merge-legacy-classes.py" --app "$T/smali-ims4" --legacy "$T/legacy-final" --old com/android/ims --new com/lge/imslegacy --out "$T/merged"
+ 
+ echo ">> 4.5 apply framework-API-drift method redirects"
+-if [ -f "$HERE/method-redirects.txt" ]; then
+-  while IFS='|' read -r old new; do
+-    case "$old" in \#*|"") continue;; esac
+-    grep -rl -- "$old" "$T/merged" 2>/dev/null | while read -r f; do sed -i "s#${old//\#/\\#}#${new//\#/\\#}#g" "$f"; done
+-  done < "$HERE/method-redirects.txt"
+-  echo "   redirects applied"
+-fi
++[ -f "$HERE/method-redirects.txt" ] && python3 "$FORGE/tools/apply-method-redirects.py" "$HERE/method-redirects.txt" "$T/merged"
+ if [ -f "$HERE/smali-fixups.py" ]; then
+   echo ">> 4.6 apply structural smali fixups"
+   python3 "$HERE/smali-fixups.py" "$T/merged"
+@@ -125,6 +120,8 @@ done
+ 
+ echo ">> 6. assemble + repackage unsigned (dex + bundled libs)"
+ [ -d "$HERE/extra-smali" ] && cp -r "$HERE/extra-smali/." "$T/merged/" && echo "   merged $(find "$HERE/extra-smali" -name "*.smali" | wc -l) extra LG-framework stub classes"
++# compat-java classes (com.lge.ims.compat.*) come out of the step-2 dex alongside the legacy AIDL
++[ -d "$T/legacy-smali/com/lge/ims/compat" ] && mkdir -p "$T/merged/com/lge/ims/compat" && cp "$T/legacy-smali/com/lge/ims/compat/"*.smali "$T/merged/com/lge/ims/compat/" && echo "   merged $(ls "$T/legacy-smali/com/lge/ims/compat/" | wc -l) compat-java classes"
+ java -jar "$SM" assemble "$T/merged" -o "$T/classes.dex"
+ cp "$APK" "$OUT"
+ (cd "$T" && zip -q "$OUT" classes.dex && zip -q -0 -X -r "$OUT" lib)
+diff --git a/ims/compat-java/com/android/internal/telephony/IIMSPhone.java b/ims/compat-java/com/android/internal/telephony/IIMSPhone.java
+new file mode 100644
+index 00000000..4694fb4d
+--- /dev/null
++++ b/ims/compat-java/com/android/internal/telephony/IIMSPhone.java
+@@ -0,0 +1,14 @@
++package com.android.internal.telephony;
++
++/**
++ * COMPILE-TIME STUB ONLY. The runtime class is extra-smali/com/android/internal/telephony/IIMSPhone.smali
++ * (the LG telephony-common AIDL interface Ims4 was built against); build-ims4.sh merges only
++ * com/lge/ims/compat/ out of the compat dex, so this file never reaches the apk. It exists so
++ * ImsPhoneCompat can `implements IIMSPhone` with the exact descriptor smali's invoke-interface uses.
++ */
++public interface IIMSPhone extends android.os.IInterface {
++    String[] getSysInfo(int item, int param, String paramEx) throws android.os.RemoteException;
++    void setImsStatusToModem(int a, int b, int c, int d) throws android.os.RemoteException;
++    void setListener(ISysMonitor listener) throws android.os.RemoteException;
++    void setSysInfo(int item, int param, int value, String paramEx) throws android.os.RemoteException;
++}
+diff --git a/ims/compat-java/com/android/internal/telephony/ISysMonitor.java b/ims/compat-java/com/android/internal/telephony/ISysMonitor.java
+new file mode 100644
+index 00000000..f8cd1227
+--- /dev/null
++++ b/ims/compat-java/com/android/internal/telephony/ISysMonitor.java
+@@ -0,0 +1,7 @@
++package com.android.internal.telephony;
++
++/** COMPILE-TIME STUB ONLY -- see IIMSPhone.java. Runtime class: extra-smali/.../ISysMonitor.smali. */
++public interface ISysMonitor extends android.os.IInterface {
++    void onLteStateChanged(int[] state) throws android.os.RemoteException;
++    void onPhoneStateChanged(int item, int arg1, int arg2, String data) throws android.os.RemoteException;
++}
+diff --git a/ims/compat-java/com/lge/ims/compat/ImsPhoneCompat.java b/ims/compat-java/com/lge/ims/compat/ImsPhoneCompat.java
+new file mode 100644
+index 00000000..f52312e0
+--- /dev/null
++++ b/ims/compat-java/com/lge/ims/compat/ImsPhoneCompat.java
+@@ -0,0 +1,207 @@
++package com.lge.ims.compat;
++
++import android.content.Context;
++import android.content.Intent;
++import android.os.Handler;
++import android.os.IBinder;
++import android.os.Looper;
++import android.telephony.AccessNetworkConstants;
++import android.telephony.CellInfo;
++import android.telephony.CellSignalStrength;
++import android.telephony.NetworkRegistrationInfo;
++import android.telephony.ServiceState;
++import android.telephony.SignalStrength;
++import android.telephony.TelephonyCallback;
++import android.telephony.TelephonyManager;
++import android.telephony.VopsSupportInfo;
++import android.util.Log;
++
++import java.util.List;
++
++import com.android.internal.telephony.IIMSPhone;
++import com.android.internal.telephony.ISysMonitor;
++
++/**
++ * In-process stand-in for LG's `com.lge.ims.phone` binder service (IMSPhone in the stock
++ * telephony-common.jar), which does not exist on an AOSP framework. IIMSPhoneGov.bindIMSPhone() does
++ * `IIMSPhone.Stub.asInterface(ServiceManager.getService("com.lge.ims.phone"))`; method-redirects.txt
++ * points that asInterface at {@link #asInterface}, so Ims4 gets this object and never sees a null
++ * phone. Everything it asks for is answered from the public/system TelephonyManager API instead of
++ * LG's Phone extensions.
++ *
++ * getSysInfo items (stock IMSPhone.getSysInfo switch; return shapes preserved):
++ *   0x1  modem string item 0x6003e (LTE RF quality)  -> "FAILURE"  (no LG RIL item; result would
++ *        arrive via onPhoneStateChanged(6), which nothing here produces)
++ *   0x3  Phone.getLteInfo()/getCdmaInfo() String[]   -> null       (stock answer with no Phone)
++ *   0x7  raw ICC EF read (PSI/SMSC, async)           -> "FAILURE"  (SMS stays on CS; Flash B)
++ *   0x8  LTE network feature flags, param 1 emergency / param 2 voice over PS -> "1"/"0" from
++ *        NetworkRegistrationInfo(PS, WWAN).getDataSpecificInfo().getVopsSupportInfo(). THIS is the
++ *        VoPS answer BootupGov.notifyVOPSState() feeds AoS (IMS_EVENT_IMS_VOICE_OVER_PS_STATE); with
++ *        it false AoSServiceAvailableCellular keeps NONETWORK+VOPS and aos_app_0 sits OUTOFSERVICE.
++ *   0x9  active APN host                             -> null
++ *   0xf  call state 0 idle / 1 ringing / 2 offhook   -> TelephonyManager.getCallState() (same codes)
++ *   0x15 signal dBm                                  -> SignalStrength.getDbm()
++ *   0x19 ISIM state                                  -> TelephonyCompat.getIsimStateFromPhone()
++ *   0x1c/0x1e FDN enabled/available                  -> "FALSE";  0x22 FDN list -> null
++ *   0x65 {sysMode, imsPrefState}                     -> {"0","0"}
++ * setSysInfo / setImsStatusToModem are the modem-facing side (RIL_REQUEST_SET_MODEM_INFO etc., see
++ * IMS.md "How registration state reaches the modem"); logged and dropped here -- Flash B.
++ *
++ * VoPS is also pushed, not just polled: BootupGov asks item 8 at most twice, 1 s apart, right after
++ * the IMS PDN comes up, and the framework still says NOT_SUPPORTED then (it flips to SUPPORTED ~25 s
++ * after boot). Stock gets the later update from LG's RIL broadcasting
++ * lge.intent.action.LTE_NETWORK_SUPPORTED_INFO (int extras VoPS_Support / EPDN_Support, codes of
++ * LGDataPhoneConstants$VolteAndEPDNSupport) which DCNetWatcher turns into isVOPSUpdated/isVoPS and
++ * notifyEvent(IMS_EVENT_IMS_VOICE_OVER_PS_STATE). {@link #startVopsMonitor} replays that from a
++ * TelephonyCallback.ServiceStateListener: sticky (DCNetWatcher registers its filter after we are
++ * bound) and re-sent on every change.
++ */
++public final class ImsPhoneCompat implements IIMSPhone {
++    private static final String TAG = "ImsPhoneCompat";
++    private static final ImsPhoneCompat INSTANCE = new ImsPhoneCompat();
++    private volatile ISysMonitor mListener;
++
++    private static final String ACTION_LTE_NETWORK_SUPPORTED_INFO = "lge.intent.action.LTE_NETWORK_SUPPORTED_INFO";
++    // LGDataPhoneConstants$VolteAndEPDNSupport codes
++    private static final int VOLTE_NOT_SUPPORT = 1, VOLTE_SUPPORT = 2, EPDN_NOT_SUPPORT = 3, EPDN_SUPPORT = 4;
++    private static boolean sVopsMonitorStarted;
++    // TelephonyRegistryManager only weak-references a TelephonyCallback: an unreferenced listener is
++    // GC'd and the callbacks silently stop (first attempt lost the VoPS 3->2 flip 25 s after boot).
++    private static VopsListener sVopsListener;
++    private static int sSentVops = -1, sSentEpdn = -1;
++
++    private ImsPhoneCompat() {}
++
++    // IIMSPhone.Stub.asInterface(IBinder) -> this. The binder is always null here (no such service).
++    public static IIMSPhone asInterface(IBinder binder) {
++        if (binder != null) Log.w(TAG, "a real com.lge.ims.phone service exists; still using the in-process stand-in");
++        return INSTANCE;
++    }
++
++    @Override public IBinder asBinder() { return null; }
++
++    @Override public void setListener(ISysMonitor listener) {
++        mListener = listener;
++        Log.i(TAG, "setListener " + (listener != null));
++        if (listener != null) startVopsMonitor();
++    }
++
++    // Broadcast LTE_NETWORK_SUPPORTED_INFO like LG's RIL does, from the framework's VopsSupportInfo.
++    private static synchronized void startVopsMonitor() {
++        if (sVopsMonitorStarted) return;
++        TelephonyManager tm = tm();
++        if (tm == null) { Log.w(TAG, "startVopsMonitor: no TelephonyManager yet"); return; }
++        sVopsMonitorStarted = true;
++        Handler h = new Handler(Looper.getMainLooper());
++        sVopsListener = new VopsListener();
++        tm.registerTelephonyCallback(h::post, sVopsListener);
++        h.post(ImsPhoneCompat::publishVops);
++        Log.i(TAG, "startVopsMonitor");
++    }
++
++    private static final class VopsListener extends TelephonyCallback implements TelephonyCallback.ServiceStateListener {
++        @Override public void onServiceStateChanged(ServiceState ss) {
++            NetworkRegistrationInfo nri = ss.getNetworkRegistrationInfo(
++                    NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
++            VopsSupportInfo vi = nri == null || nri.getDataSpecificInfo() == null ? null : nri.getDataSpecificInfo().getVopsSupportInfo();
++            Log.d(TAG, "onServiceStateChanged: raw " + vi + " -> vops=" + vops(false) + " emc=" + vops(true));
++            publishVops();
++        }
++    }
++
++    private static void publishVops() {
++        Context ctx = TelephonyCompat.currentApplication();
++        if (ctx == null) return;
++        int vops = vops(false) ? VOLTE_SUPPORT : VOLTE_NOT_SUPPORT;
++        int epdn = vops(true) ? EPDN_SUPPORT : EPDN_NOT_SUPPORT;
++        if (vops == sSentVops && epdn == sSentEpdn) return;
++        Log.i(TAG, "VoPS_Support " + sSentVops + " -> " + vops + ", EPDN_Support " + sSentEpdn + " -> " + epdn + "; sticky " + ACTION_LTE_NETWORK_SUPPORTED_INFO);
++        sSentVops = vops; sSentEpdn = epdn;
++        Intent i = new Intent(ACTION_LTE_NETWORK_SUPPORTED_INFO).putExtra("VoPS_Support", vops).putExtra("EPDN_Support", epdn);
++        try {
++            ctx.sendStickyBroadcast(i);   // android.uid.phone carries BROADCAST_STICKY
++        } catch (SecurityException e) {
++            Log.w(TAG, "sendStickyBroadcast: " + e + "; plain broadcast");
++            ctx.sendBroadcast(i);
++        }
++    }
++
++    @Override public void setSysInfo(int item, int param, int value, String paramEx) {
++        Log.i(TAG, "setSysInfo(item=0x" + Integer.toHexString(item) + ", param=0x" + Integer.toHexString(param)
++                + ", value=" + value + ") dropped (no LG RIL)");
++    }
++
++    @Override public void setImsStatusToModem(int a, int b, int c, int d) {
++        Log.i(TAG, "setImsStatusToModem(" + a + "," + b + "," + c + "," + d + ") dropped (no LG RIL)");
++    }
++
++    @Override public String[] getSysInfo(int item, int param, String paramEx) {
++        switch (item) {
++            case 0x1: case 0x7:
++                return new String[] { "FAILURE" };
++            case 0x8: {
++                boolean v = param == 1 ? vops(true) : param == 2 ? vops(false) : false;
++                Log.d(TAG, "LTE network feature :: param(" + param + "), result(" + (v ? 1 : 0) + ")");
++                return new String[] { v ? "1" : "0" };
++            }
++            case 0xf: {
++                TelephonyManager tm = tm();
++                return new String[] { String.valueOf(tm == null ? 0 : tm.getCallState()) };
++            }
++            case 0x15: {
++                TelephonyManager tm = tm();
++                SignalStrength ss = tm == null ? null : tm.getSignalStrength();
++                // SignalStrength.getDbm() is @hide; the primary cell's CellSignalStrength is the public form
++                List<CellSignalStrength> cs = ss == null ? null : ss.getCellSignalStrengths();
++                int dbm = cs == null || cs.isEmpty() ? CellInfo.UNAVAILABLE : cs.get(0).getDbm();
++                return new String[] { String.valueOf(dbm) };
++            }
++            case 0x19:
++                return new String[] { TelephonyCompat.getIsimStateFromPhone(param) };
++            case 0x1c: case 0x1e:
++                return new String[] { "FALSE" };
++            case 0x65:
++                return new String[] { "0", "0" };
++            case 0x2: case 0x3: case 0x9: case 0x22:
++                return null;
++            default:
++                Log.d(TAG, "Unknown item (" + item + ")");
++                return null;
++        }
++    }
++
++    // LTE VoPS / emergency-bearer support for the PS domain on the cellular transport.
++    //
++    // LATCHED while PS stays registered on LTE: this device's qcrild reports lteVopsInfo.isVopsSupported
++    // only in DATA_REGISTRATION_STATE responses with rat=14 (LTE); every rat=19 (LTE_CA) response says
++    // false, and the RAT flips 14<->19 about once a second around data activity, so the framework's
++    // VopsSupportInfo flickers 2/3/2/3 on a cell whose Attach Accept said VoPS (VoPS is per tracking
++    // area; it cannot change without a TAU). Without the latch Ims4 is told VoPS=false right after
++    // SendREGISTER and tears registration down. Reset when PS leaves LTE or deregisters.
++    private static boolean sVopsLatched, sEmcLatched;
++
++    private static boolean vops(boolean emergency) {
++        try {
++            TelephonyManager tm = tm();
++            ServiceState ss = tm == null ? null : tm.getServiceState();
++            NetworkRegistrationInfo nri = ss == null ? null : ss.getNetworkRegistrationInfo(
++                    NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
++            boolean onLte = nri != null && nri.isRegistered()
++                    && nri.getAccessNetworkTechnology() == TelephonyManager.NETWORK_TYPE_LTE;
++            if (!onLte) { sVopsLatched = sEmcLatched = false; return false; }
++            VopsSupportInfo vi = nri.getDataSpecificInfo() == null ? null : nri.getDataSpecificInfo().getVopsSupportInfo();
++            if (vi == null) { Log.d(TAG, "vops: no VopsSupportInfo"); return emergency ? sEmcLatched : sVopsLatched; }
++            if (vi.isVopsSupported()) sVopsLatched = true;
++            if (vi.isEmergencyServiceSupported()) sEmcLatched = true;
++            return emergency ? sEmcLatched : sVopsLatched;
++        } catch (Exception e) {
++            Log.e(TAG, "vops: " + e);
++            return false;
++        }
++    }
++
++    private static TelephonyManager tm() {
++        Context ctx = TelephonyCompat.currentApplication();
++        return ctx == null ? null : ctx.getSystemService(TelephonyManager.class);
++    }
++}
+diff --git a/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java b/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java
+new file mode 100644
+index 00000000..fbb71c4e
+--- /dev/null
++++ b/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java
+@@ -0,0 +1,207 @@
++package com.lge.ims.compat;
++
++import android.content.ContentResolver;
++import android.content.Context;
++import android.content.Intent;
++import android.location.LocationManager;
++import android.net.ConnectivityManager;
++import android.net.LinkProperties;
++import android.net.Network;
++import android.net.NetworkCapabilities;
++import android.os.Handler;
++import android.os.Looper;
++import android.telephony.SubscriptionManager;
++import android.telephony.TelephonyManager;
++import android.text.TextUtils;
++import android.util.Log;
++
++import java.net.InetAddress;
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Replacements for @hide TelephonyManager methods LG's 2016 Ims4 calls that no longer exist.
++ * Static; the first parameter is the receiver, so a smali `invoke-virtual {tm, ...}, TelephonyManager->m`
++ * becomes `invoke-static {tm, ...}, TelephonyCompat->m` with the registers untouched
++ * (method-redirects.txt `old|static new`).
++ *
++ * getPcscfAddress(apnType) returned the P-CSCF addresses the modem delivered in the PDN's PCO
++ * (Oreo: DcTracker -> DataConnection.getPcscfAddresses). Since Q they are on the IMS network's
++ * LinkProperties (getPcscfServers(), @SystemApi) -- find the network carrying NET_CAPABILITY_IMS
++ * (apnType "emergency" -> EIMS) and read them from there. null when no such network is up, which
++ * is what the old API returned before the PDN connected; DCApn.getValidAddresses() handles null.
++ *
++ * getIsimStateFromPhone(phoneId) replaces SIMStateAgent's own static of that name, which asked LG's
++ * `com.lge.ims.phone` binder service (IMSPhone in LG telephony-common, absent here) for item 0x19 ==
++ * LGImsIsimHandler.getIsimState(): "LOADED" once UiccController's APPTYPE_ISIM records are in, else
++ * "NOT_READY"/"NOT_PRESENT". Without it the ISIM is "disabled on INIT", the IMPI stays
++ * anonymous@anonymous.invalid and AoS blocks registration with SUBSCRIBERINCOMPLETED forever.
++ * Derived here from TelephonyManager: ISIM records loaded <=> IMPI readable. If the records are
++ * not in yet, a monitor polls and delivers the result the way stock does -- the sticky
++ * `com.lge.ims.ISIM_STATE_CHANGED` broadcast with `isimState`/`subscription`/`phone`, which
++ * SIMStateAgent already consumes (live receiver + sticky read-back).
++ *
++ * getIsim*ForSubscriber / getIsimChallengeResponse: LG per-subscriber ISIM getters and the pre-O
++ * challenge API. The modern equivalents are createForSubscriptionId(subId).getIsim*() and
++ * getIccAuthentication(APPTYPE_ISIM, AUTHTYPE_EAP_AKA, nonce) -- the latter is exactly what Ims4's
++ * own MTK branch of ISIMAgent.getChallengeResponse() calls, so the nonce/response encoding matches.
++ *
++ * isLocationProviderEnabledForUser: Settings.Secure's @hide helper is gone (location is no longer a
++ * Settings string); LocationManager.isProviderEnabled() is the per-current-user answer, which is what
++ * the userId -2 (USER_CURRENT) call sites asked for.
++ */
++public final class TelephonyCompat {
++    private static final String TAG = "TelephonyCompat";
++    private TelephonyCompat() {}
++
++    public static String[] getPcscfAddress(TelephonyManager tm, String apnType) {
++        return getPcscfAddressForSubscriber(tm, apnType, -1);
++    }
++
++    public static String[] getPcscfAddressForSubscriber(TelephonyManager tm, String apnType, int subId) {
++        Context ctx = currentApplication();
++        if (ctx == null) { Log.e(TAG, "no application context"); return null; }
++        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
++        if (cm == null) return null;
++        int cap = "emergency".equals(apnType) ? NetworkCapabilities.NET_CAPABILITY_EIMS
++                                              : NetworkCapabilities.NET_CAPABILITY_IMS;
++        for (Network n : cm.getAllNetworks()) {
++            NetworkCapabilities nc = cm.getNetworkCapabilities(n);
++            if (nc == null || !nc.hasCapability(cap) || !nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) continue;
++            LinkProperties lp = cm.getLinkProperties(n);
++            if (lp == null) continue;
++            List<String> out = new ArrayList<>();
++            for (InetAddress a : lp.getPcscfServers()) out.add(a.getHostAddress());
++            Log.i(TAG, "getPcscfAddress(" + apnType + ") from " + n + " " + lp.getInterfaceName() + ": " + out);
++            return out.isEmpty() ? null : out.toArray(new String[0]);
++        }
++        Log.w(TAG, "getPcscfAddress(" + apnType + "): no network with capability " + cap);
++        return null;
++    }
++
++    // ---- ISIM state (stands in for LGImsIsimHandler + IIMSPhone.getSysInfo(0x19)) ----
++    // Stock SIMStateAgent learns the ISIM state two ways, both from LG telephony-common: the STICKY
++    // com.lge.ims.ISIM_STATE_CHANGED intent LGImsIsimHandler publishes (read back 5 s after the SIM
++    // goes LOADED, see updateIsimState) and IIMSPhone.getSysInfo(0x19) (data-subscription change
++    // only). Neither exists here, so SIMStateAgent.<init> starts this monitor (smali-fixups.py): poll
++    // until the ISIM records are readable, then publish the same sticky intent with the same extras.
++    private static final String ACTION_ISIM_STATE_CHANGED = "com.lge.ims.ISIM_STATE_CHANGED";
++    private static final int ISIM_POLL_FAST_MS = 1000, ISIM_POLL_FAST_MAX = 180, ISIM_POLL_SLOW_MS = 10000;
++    private static Handler sHandler;
++    private static boolean sMonitorStarted;
++    private static String sPublished;
++    private static int sPolls;
++
++    public static synchronized void startIsimStateMonitor() {
++        if (sMonitorStarted) return;
++        sMonitorStarted = true;
++        Log.i(TAG, "startIsimStateMonitor");
++        handler().post(TelephonyCompat::isimPoll);
++    }
++
++    private static synchronized Handler handler() {
++        if (sHandler == null) sHandler = new Handler(Looper.getMainLooper());
++        return sHandler;
++    }
++
++    private static void isimPoll() {
++        final int phoneId = 0;   // single-SIM device; LGImsIsimHandler tracks phone 0 the same way
++        String state = computeIsimState(phoneId);
++        sPolls++;
++        if (!"NOT_READY".equals(state) && !state.equals(sPublished)) {
++            publishIsimState(state, phoneId);
++        } else if ("NOT_READY".equals(state) && sPublished != null && !"NOT_READY".equals(sPublished)) {
++            publishIsimState(state, phoneId);   // SIM pulled / refreshing: tell SIMStateAgent too
++        }
++        boolean fast = sPublished == null && sPolls < ISIM_POLL_FAST_MAX;
++        handler().postDelayed(TelephonyCompat::isimPoll, fast ? ISIM_POLL_FAST_MS : ISIM_POLL_SLOW_MS);
++    }
++
++    private static void publishIsimState(String state, int phoneId) {
++        Context ctx = currentApplication();
++        if (ctx == null) return;
++        int subId = SubscriptionManager.getSubscriptionId(phoneId);
++        Intent i = new Intent(ACTION_ISIM_STATE_CHANGED)
++                .putExtra("isimState", state).putExtra("subscription", subId).putExtra("phone", phoneId);
++        Log.i(TAG, "ISIM state " + sPublished + " -> " + state + " (poll " + sPolls + ", subId " + subId + "); sticky broadcast");
++        sPublished = state;
++        try {
++            ctx.sendStickyBroadcast(i);   // android.uid.phone carries BROADCAST_STICKY
++        } catch (SecurityException e) {
++            Log.w(TAG, "sendStickyBroadcast: " + e + "; plain broadcast");
++            ctx.sendBroadcast(i);
++        }
++    }
++
++    public static String getIsimStateFromPhone(int phoneId) {
++        String state = computeIsimState(phoneId);
++        Log.i(TAG, "getIsimStateFromPhone(" + phoneId + ") = " + state);
++        startIsimStateMonitor();
++        return state;
++    }
++
++    private static String computeIsimState(int phoneId) {
++        Context ctx = currentApplication();
++        if (ctx == null) return "NOT_READY";
++        TelephonyManager tm = ctx.getSystemService(TelephonyManager.class);
++        if (tm == null) return "NOT_READY";
++        int simState = tm.getSimState(phoneId);
++        if (simState == TelephonyManager.SIM_STATE_ABSENT
++                || (simState == TelephonyManager.SIM_STATE_UNKNOWN && !tm.hasIccCard())) return "NOT_PRESENT";
++        int subId = SubscriptionManager.getSubscriptionId(phoneId);
++        if (!SubscriptionManager.isValidSubscriptionId(subId)) return "NOT_READY";
++        String impi = (String) hidden(tm.createForSubscriptionId(subId), "getIsimImpi");
++        return TextUtils.isEmpty(impi) ? "NOT_READY" : "LOADED";
++    }
++
++    // ---- LG per-subscriber ISIM getters + pre-O challenge API ----
++    private static TelephonyManager forSub(TelephonyManager tm, int subId) {
++        return SubscriptionManager.isValidSubscriptionId(subId) ? tm.createForSubscriptionId(subId) : tm;
++    }
++    public static String getIsimImpiForSubscriber(TelephonyManager tm, int subId) { return (String) hidden(forSub(tm, subId), "getIsimImpi"); }
++    public static String getIsimDomainForSubscriber(TelephonyManager tm, int subId) { return forSub(tm, subId).getIsimDomain(); }
++    public static String[] getIsimImpuForSubscriber(TelephonyManager tm, int subId) { return (String[]) hidden(forSub(tm, subId), "getIsimImpu"); }
++    public static String getIsimIstForSubscriber(TelephonyManager tm, int subId) { return forSub(tm, subId).getIsimIst(); }
++    public static String[] getIsimPcscfForSubscriber(TelephonyManager tm, int subId) { return (String[]) hidden(forSub(tm, subId), "getIsimPcscf"); }
++    public static String getIsimChallengeResponse(TelephonyManager tm, String nonce) {
++        String r = tm.getIccAuthentication(TelephonyManager.APPTYPE_ISIM, TelephonyManager.AUTHTYPE_EAP_AKA, nonce);
++        Log.i(TAG, "getIsimChallengeResponse: " + (r == null ? "null" : r.length() + " chars"));
++        return r;
++    }
++    public static String getIsimChallengeResponseForSubscriber(TelephonyManager tm, String nonce, int subId) {
++        return getIsimChallengeResponse(forSub(tm, subId), nonce);
++    }
++
++    // @hide (non-SystemApi) TelephonyManager getters: no stub in the system android.jar -> reflection.
++    private static Object hidden(TelephonyManager tm, String method) {
++        try {
++            return TelephonyManager.class.getMethod(method).invoke(tm);
++        } catch (Exception e) {
++            Log.e(TAG, method + ": " + e);
++            return null;
++        }
++    }
++
++    // Settings.Secure.isLocationProviderEnabledForUser(resolver, provider, userId) -> LocationManager.
++    public static boolean isLocationProviderEnabledForUser(ContentResolver cr, String provider, int userId) {
++        Context ctx = currentApplication();
++        LocationManager lm = ctx == null ? null : ctx.getSystemService(LocationManager.class);
++        try {
++            return lm != null && lm.isProviderEnabled(provider);
++        } catch (Exception e) {
++            Log.e(TAG, "isProviderEnabled(" + provider + "): " + e);
++            return false;
++        }
++    }
++
++    // android.app.ActivityThread.currentApplication() is @hide; Ims4 is platform-signed so the call is
++    // allowed, but android.jar has no stub for it -> reflection.
++    static Context currentApplication() {
++        try {
++            return (Context) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null);
++        } catch (Exception e) {
++            Log.e(TAG, "currentApplication: " + e);
++            return null;
++        }
++    }
++}
+diff --git a/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali
+index 18cdec8a..fb926dcd 100644
+--- a/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali
++++ b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali
+@@ -1,40 +1,160 @@
+-.class public Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-.super Ljava/lang/Object;
++.class public final enum Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.super Ljava/lang/Enum;
++.source "LGPhoneConstants.java"
++# LG framework enum (LteStateInfo) -- names, ordinals and codes copied from the stock Oreo boot
++# classpath. Codes MATTER: DCNetWatcher.isLteEmergencyOnly() compares getCode() against
++# EMERGENCY_ATTACHED.getCode() and ApnIms.connect() blocks the IMS APN while it is true; a stub whose
++# getCode() returns 0 for every constant made it ALWAYS true ("APN is blocked; LTE only supports the
++# emergency service"). fromInt() returns the singletons (callers compare by reference) or NONE.
+ 
+-.field public static EMERGENCY_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-.field public static NORMAL_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-.field public static NORMAL_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum NONE:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum NORMAL_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum EMERGENCY_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum NORMAL_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum EMERGENCY_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum REATTACH_REQUIRED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum REATTACH_NOT_REQUIURED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum IMSI_DETACH_MT_DETACH:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum RESERVED_MT_DETACH_TYPE_ONE:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static final enum RESERVED_MT_DETACH_TYPE_TWO:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field private static final synthetic $VALUES:[Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++
++.field private final mCode:I
+ 
+ .method static constructor <clinit>()V
+-    .registers 1
++    .registers 5
++    const/16 v4, 10
++    new-array v3, v4, [Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "NONE"
++    const/16 v2, 0
++    const/16 v4, 0
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NONE:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 0
++    aput-object v0, v3, v2
+     new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    const-string v1, "NORMAL_DETACHED"
++    const/16 v2, 1
++    const/16 v4, 1
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NORMAL_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 1
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "EMERGENCY_ATTACHED"
++    const/16 v2, 2
++    const/16 v4, 2
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
+     sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->EMERGENCY_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 2
++    aput-object v0, v3, v2
+     new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    const-string v1, "NORMAL_ATTACHED"
++    const/16 v2, 3
++    const/16 v4, 3
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
+     sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NORMAL_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 3
++    aput-object v0, v3, v2
+     new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
+-    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NORMAL_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "EMERGENCY_DETACHED"
++    const/16 v2, 4
++    const/16 v4, 4
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->EMERGENCY_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 4
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "REATTACH_REQUIRED"
++    const/16 v2, 5
++    const/16 v4, 0xb
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->REATTACH_REQUIRED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 5
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "REATTACH_NOT_REQUIURED"
++    const/16 v2, 6
++    const/16 v4, 0xc
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->REATTACH_NOT_REQUIURED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 6
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "IMSI_DETACH_MT_DETACH"
++    const/16 v2, 7
++    const/16 v4, 0xd
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->IMSI_DETACH_MT_DETACH:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 7
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "RESERVED_MT_DETACH_TYPE_ONE"
++    const/16 v2, 8
++    const/16 v4, 0x10
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->RESERVED_MT_DETACH_TYPE_ONE:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 8
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const-string v1, "RESERVED_MT_DETACH_TYPE_TWO"
++    const/16 v2, 9
++    const/16 v4, 0x11
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->RESERVED_MT_DETACH_TYPE_TWO:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    const/16 v2, 9
++    aput-object v0, v3, v2
++    sput-object v3, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->$VALUES:[Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+     return-void
+ .end method
+ 
+-.method public constructor <init>()V
+-    .registers 1
+-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++.method private constructor <init>(Ljava/lang/String;II)V
++    .registers 4
++    invoke-direct {p0, p1, p2}, Ljava/lang/Enum;-><init>(Ljava/lang/String;I)V
++    iput p3, p0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->mCode:I
+     return-void
+ .end method
+ 
+ .method public static fromInt(I)Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-    .registers 3
+-    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    .registers 6
++    sget-object v1, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->$VALUES:[Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    array-length v2, v1
++    const/4 v3, 0x0
++    :loop
++    if-ge v3, v2, :none
++    aget-object v0, v1, v3
++    iget v4, v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->mCode:I
++    if-ne v4, p0, :next
++    return-object v0
++    :next
++    add-int/lit8 v3, v3, 0x1
++    goto :loop
++    :none
++    sget-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NONE:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    return-object v0
++.end method
++
++.method public static valueOf(Ljava/lang/String;)Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    .registers 2
++    const-class v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    invoke-static {v0, p0}, Ljava/lang/Enum;->valueOf(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;
++    move-result-object v0
++    check-cast v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    return-object v0
++.end method
++
++.method public static values()[Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    .registers 1
++    sget-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->$VALUES:[Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    invoke-virtual {v0}, [Ljava/lang/Object;->clone()Ljava/lang/Object;
++    move-result-object v0
++    check-cast v0, [Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
+     return-object v0
+ .end method
+ 
+ .method public getCode()I
+     .registers 2
+-    const/4 v0, 0x0
++    iget v0, p0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->mCode:I
+     return v0
+ .end method
+-
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali
+index 159848d7..45b5cb70 100644
+--- a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali
++++ b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali
+@@ -1,30 +1,169 @@
+-.class public Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+-.super Ljava/lang/Object;
++.class public final enum Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.super Ljava/lang/Enum;
++.source "LGDataPhoneConstants.java"
++# LG framework enum (LteStateInfo) -- names, ordinals and codes copied from the stock Oreo boot
++# classpath. Codes MATTER: DCNetWatcher.isLteEmergencyOnly() compares getCode() against
++# EMERGENCY_ATTACHED.getCode() and ApnIms.connect() blocks the IMS APN while it is true; a stub whose
++# getCode() returns 0 for every constant made it ALWAYS true ("APN is blocked; LTE only supports the
++# emergency service"). fromInt() returns the singletons (callers compare by reference) or NONE.
+ 
+-.field public static EMERGENCY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+-.field public static EMERGENCY_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum NONE:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum NORMAL_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum EMERGENCY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum NORMAL_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum EMERGENCY_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum EPS_ONLY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum REATTACH_REQUIRED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum REATTACH_NOT_REQUIURED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum IMSI_DETACH_MT_DETACH:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum RESERVED_MT_DETACH_TYPE_ONE:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static final enum RESERVED_MT_DETACH_TYPE_TWO:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field private static final synthetic $VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++
++.field private final mCode:I
+ 
+ .method static constructor <clinit>()V
+-    .registers 1
++    .registers 5
++    const/16 v4, 11
++    new-array v3, v4, [Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "NONE"
++    const/16 v2, 0
++    const/16 v4, 0
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->NONE:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 0
++    aput-object v0, v3, v2
+     new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>()V
++    const-string v1, "NORMAL_DETACHED"
++    const/16 v2, 1
++    const/16 v4, 1
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->NORMAL_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 1
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "EMERGENCY_ATTACHED"
++    const/16 v2, 2
++    const/16 v4, 2
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
+     sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->EMERGENCY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 2
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "NORMAL_ATTACHED"
++    const/16 v2, 3
++    const/16 v4, 3
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->NORMAL_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 3
++    aput-object v0, v3, v2
+     new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>()V
++    const-string v1, "EMERGENCY_DETACHED"
++    const/16 v2, 4
++    const/16 v4, 4
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
+     sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->EMERGENCY_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 4
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "EPS_ONLY_ATTACHED"
++    const/16 v2, 5
++    const/16 v4, 5
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->EPS_ONLY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 5
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "REATTACH_REQUIRED"
++    const/16 v2, 6
++    const/16 v4, 0xb
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->REATTACH_REQUIRED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 6
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "REATTACH_NOT_REQUIURED"
++    const/16 v2, 7
++    const/16 v4, 0xc
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->REATTACH_NOT_REQUIURED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 7
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "IMSI_DETACH_MT_DETACH"
++    const/16 v2, 8
++    const/16 v4, 0xd
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->IMSI_DETACH_MT_DETACH:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 8
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "RESERVED_MT_DETACH_TYPE_ONE"
++    const/16 v2, 9
++    const/16 v4, 0x10
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->RESERVED_MT_DETACH_TYPE_ONE:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 9
++    aput-object v0, v3, v2
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const-string v1, "RESERVED_MT_DETACH_TYPE_TWO"
++    const/16 v2, 10
++    const/16 v4, 0x11
++    invoke-direct {v0, v1, v2, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>(Ljava/lang/String;II)V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->RESERVED_MT_DETACH_TYPE_TWO:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    const/16 v2, 10
++    aput-object v0, v3, v2
++    sput-object v3, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->$VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+     return-void
+ .end method
+ 
+-.method public constructor <init>()V
+-    .registers 1
+-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++.method private constructor <init>(Ljava/lang/String;II)V
++    .registers 4
++    invoke-direct {p0, p1, p2}, Ljava/lang/Enum;-><init>(Ljava/lang/String;I)V
++    iput p3, p0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->mCode:I
+     return-void
+ .end method
+ 
+ .method public static fromInt(I)Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+-    .registers 3
+-    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+-    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>()V
++    .registers 6
++    sget-object v1, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->$VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    array-length v2, v1
++    const/4 v3, 0x0
++    :loop
++    if-ge v3, v2, :none
++    aget-object v0, v1, v3
++    iget v4, v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->mCode:I
++    if-ne v4, p0, :next
++    return-object v0
++    :next
++    add-int/lit8 v3, v3, 0x1
++    goto :loop
++    :none
++    sget-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->NONE:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    return-object v0
++.end method
++
++.method public static valueOf(Ljava/lang/String;)Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    .registers 2
++    const-class v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    invoke-static {v0, p0}, Ljava/lang/Enum;->valueOf(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;
++    move-result-object v0
++    check-cast v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
+     return-object v0
+ .end method
+ 
++.method public static values()[Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    .registers 1
++    sget-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->$VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    invoke-virtual {v0}, [Ljava/lang/Object;->clone()Ljava/lang/Object;
++    move-result-object v0
++    check-cast v0, [Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    return-object v0
++.end method
++
++.method public getCode()I
++    .registers 2
++    iget v0, p0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->mCode:I
++    return v0
++.end method
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali
+index 1b244616..759358b7 100644
+--- a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali
++++ b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali
+@@ -1,26 +1,241 @@
+-.class public Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
+-.super Ljava/lang/Object;
++# Faithful copy of LG's com.lge.lgdata.LGDataPhoneConstants$VolteAndEPDNSupport (identical to the
++# stock LGPhoneConstants$VolteAndEPDNSupport in telephony-common): NONE 0, VOLTE_NOT_SUPPORT 1,
++# VOLTE_SUPPORT 2, EPDN_NOT_SUPPORT 3, EPDN_SUPPORT 4, fromInt() by code. A verify-only stub whose
++# fromInt() returns a fresh instance can never == VOLTE_SUPPORT, so DCNetWatcher never sees VoPS=true
++# (same trap as LteStateInfo). The sender on AOSP is ImsPhoneCompat (lge.intent.action.LTE_NETWORK_SUPPORTED_INFO).
++.class public final enum Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++.super Ljava/lang/Enum;
++.source "LGDataPhoneConstants.java"
+ 
+-.field public static VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
+ 
++# annotations
++.annotation system Ldalvik/annotation/EnclosingClass;
++    value = Lcom/lge/lgdata/LGDataPhoneConstants;
++.end annotation
++
++.annotation system Ldalvik/annotation/InnerClass;
++    accessFlags = 0x4019
++    name = "VolteAndEPDNSupport"
++.end annotation
++
++.annotation system Ldalvik/annotation/Signature;
++    value = {
++        "Ljava/lang/Enum",
++        "<",
++        "Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;",
++        ">;"
++    }
++.end annotation
++
++
++# static fields
++.field private static final synthetic $VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++.field public static final enum EPDN_NOT_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++.field public static final enum EPDN_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++.field public static final enum NONE:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++.field private static final VOLTE_EPDN_SUPPORT_MAP:Ljava/util/HashMap;
++    .annotation system Ldalvik/annotation/Signature;
++        value = {
++            "Ljava/util/HashMap",
++            "<",
++            "Ljava/lang/Integer;",
++            "Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;",
++            ">;"
++        }
++    .end annotation
++.end field
++
++.field public static final enum VOLTE_NOT_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++.field public static final enum VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++
++# instance fields
++.field private final mCode:I
++
++
++# direct methods
+ .method static constructor <clinit>()V
+-    .registers 1
+-    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
+-    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>()V
+-    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    .registers 8
++
++    const/4 v7, 0x4
++
++    const/4 v6, 0x3
++
++    const/4 v5, 0x2
++
++    const/4 v4, 0x1
++
++    const/4 v1, 0x0
++
++    new-instance v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    const-string/jumbo v3, "NONE"
++
++    invoke-direct {v2, v3, v1, v1}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>(Ljava/lang/String;II)V
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->NONE:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    new-instance v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    const-string/jumbo v3, "VOLTE_NOT_SUPPORT"
++
++    invoke-direct {v2, v3, v4, v4}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>(Ljava/lang/String;II)V
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_NOT_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    new-instance v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    const-string/jumbo v3, "VOLTE_SUPPORT"
++
++    invoke-direct {v2, v3, v5, v5}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>(Ljava/lang/String;II)V
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    new-instance v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    const-string/jumbo v3, "EPDN_NOT_SUPPORT"
++
++    invoke-direct {v2, v3, v6, v6}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>(Ljava/lang/String;II)V
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->EPDN_NOT_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    new-instance v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    const-string/jumbo v3, "EPDN_SUPPORT"
++
++    invoke-direct {v2, v3, v7, v7}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>(Ljava/lang/String;II)V
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->EPDN_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    const/4 v2, 0x5
++
++    new-array v2, v2, [Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    sget-object v3, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->NONE:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    aput-object v3, v2, v1
++
++    sget-object v3, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_NOT_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    aput-object v3, v2, v4
++
++    sget-object v3, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    aput-object v3, v2, v5
++
++    sget-object v3, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->EPDN_NOT_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    aput-object v3, v2, v6
++
++    sget-object v3, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->EPDN_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    aput-object v3, v2, v7
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->$VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    new-instance v2, Ljava/util/HashMap;
++
++    invoke-direct {v2}, Ljava/util/HashMap;-><init>()V
++
++    sput-object v2, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_EPDN_SUPPORT_MAP:Ljava/util/HashMap;
++
++    invoke-static {}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->values()[Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    move-result-object v2
++
++    array-length v3, v2
++
++    :goto_5c
++    if-ge v1, v3, :cond_70
++
++    aget-object v0, v2, v1
++
++    sget-object v4, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_EPDN_SUPPORT_MAP:Ljava/util/HashMap;
++
++    invoke-virtual {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->getCode()I
++
++    move-result v5
++
++    invoke-static {v5}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v5
++
++    invoke-virtual {v4, v5, v0}, Ljava/util/HashMap;->put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
++
++    add-int/lit8 v1, v1, 0x1
++
++    goto :goto_5c
++
++    :cond_70
+     return-void
+ .end method
+ 
+-.method public constructor <init>()V
+-    .registers 1
+-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++.method private constructor <init>(Ljava/lang/String;II)V
++    .registers 4
++
++    invoke-direct {p0, p1, p2}, Ljava/lang/Enum;-><init>(Ljava/lang/String;I)V
++
++    iput p3, p0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->mCode:I
++
+     return-void
+ .end method
+ 
+ .method public static fromInt(I)Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
+-    .registers 3
+-    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
+-    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>()V
++    .registers 4
++
++    sget-object v1, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_EPDN_SUPPORT_MAP:Ljava/util/HashMap;
++
++    invoke-static {p0}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v2
++
++    invoke-virtual {v1, v2}, Ljava/util/HashMap;->get(Ljava/lang/Object;)Ljava/lang/Object;
++
++    move-result-object v0
++
++    check-cast v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    if-nez v0, :cond_10
++
++    sget-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->NONE:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    :cond_10
+     return-object v0
+ .end method
+ 
++.method public static valueOf(Ljava/lang/String;)Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    .registers 2
++
++    const-class v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    invoke-static {v0, p0}, Ljava/lang/Enum;->valueOf(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;
++
++    move-result-object v0
++
++    check-cast v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    return-object v0
++.end method
++
++.method public static values()[Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    .registers 1
++
++    sget-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->$VALUES:[Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++    return-object v0
++.end method
++
++
++# virtual methods
++.method public getCode()I
++    .registers 2
++
++    iget v0, p0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->mCode:I
++
++    return v0
++.end method
+diff --git a/ims/method-redirects.txt b/ims/method-redirects.txt
+index b06b2d66..77291dd1 100644
+--- a/ims/method-redirects.txt
++++ b/ims/method-redirects.txt
+@@ -18,3 +18,28 @@ invoke-direct {p0, p2}, Landroid/telephony/PhoneStateListener;-><init>(I)V|invok
+ 0x1120091|0x01110074
+ 0x1120092|0x01110145
+ 0x1120093|0x01110075
++# --- Removed @hide methods: instance call -> static compat (receiver becomes the first argument) ---
++# TelephonyManager.getPcscfAddress*(apnType) (Oreo: PCO addresses via DcTracker) is gone; the P-CSCF list
++# lives on the IMS network's LinkProperties now. compat-java/.../TelephonyCompat.java reads it there.
++Landroid/telephony/TelephonyManager;->getPcscfAddress(Ljava/lang/String;)[Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getPcscfAddress(Landroid/telephony/TelephonyManager;Ljava/lang/String;)[Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getPcscfAddressForSubscriber(Ljava/lang/String;I)[Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getPcscfAddressForSubscriber(Landroid/telephony/TelephonyManager;Ljava/lang/String;I)[Ljava/lang/String;
++# --- LG IMSPhone (com.lge.ims.phone) is absent: derive the ISIM state in-app (see TelephonyCompat) ---
++Lcom/lge/ims/common/agents/SIMStateAgent;->getIsimStateFromPhone(I)Ljava/lang/String;|Lcom/lge/ims/compat/TelephonyCompat;->getIsimStateFromPhone(I)Ljava/lang/String;
++# --- LG per-subscriber ISIM getters and the pre-O ISIM challenge API ---
++Landroid/telephony/TelephonyManager;->getIsimImpiForSubscriber(I)Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimImpiForSubscriber(Landroid/telephony/TelephonyManager;I)Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getIsimDomainForSubscriber(I)Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimDomainForSubscriber(Landroid/telephony/TelephonyManager;I)Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getIsimImpuForSubscriber(I)[Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimImpuForSubscriber(Landroid/telephony/TelephonyManager;I)[Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getIsimIstForSubscriber(I)Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimIstForSubscriber(Landroid/telephony/TelephonyManager;I)Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getIsimPcscfForSubscriber(I)[Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimPcscfForSubscriber(Landroid/telephony/TelephonyManager;I)[Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getIsimChallengeResponse(Ljava/lang/String;)Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimChallengeResponse(Landroid/telephony/TelephonyManager;Ljava/lang/String;)Ljava/lang/String;
++Landroid/telephony/TelephonyManager;->getIsimChallengeResponseForSubscriber(Ljava/lang/String;I)Ljava/lang/String;|static Lcom/lge/ims/compat/TelephonyCompat;->getIsimChallengeResponseForSubscriber(Landroid/telephony/TelephonyManager;Ljava/lang/String;I)Ljava/lang/String;
++# --- Remaining A17 gaps from app-fw-api-gap.py ---
++# TelephonyManager.setCellInfoListRate(int) is gone (CellInfoTracker throttles its own callback anyway)
++Landroid/telephony/TelephonyManager;->setCellInfoListRate(I)V|drop
++# Settings.Secure.isLocationProviderEnabledForUser is gone; LocationManager answers for the current user
++Landroid/provider/Settings$Secure;->isLocationProviderEnabledForUser(Landroid/content/ContentResolver;Ljava/lang/String;I)Z|Lcom/lge/ims/compat/TelephonyCompat;->isLocationProviderEnabledForUser(Landroid/content/ContentResolver;Ljava/lang/String;I)Z
++# ITelephonyRegistry.notifyVoLteServiceStateChanged / VoLteServiceState are gone (test receiver only)
++Lcom/android/internal/telephony/ITelephonyRegistry;->notifyVoLteServiceStateChanged(Landroid/telephony/VoLteServiceState;)V|drop
++# --- com.lge.ims.phone (IIMSPhone) is not a service on AOSP: hand Ims4 an in-process stand-in ---
++# IIMSPhoneGov.bindIMSPhone() -> ImsPhoneCompat; item 8 (VoPS) is what clears AoS NONETWORK+VOPS
++Lcom/android/internal/telephony/IIMSPhone$Stub;->asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/IIMSPhone;|Lcom/lge/ims/compat/ImsPhoneCompat;->asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/IIMSPhone;
+diff --git a/ims/smali-fixups.py b/ims/smali-fixups.py
+index 1b7a3330..6d52e575 100644
+--- a/ims/smali-fixups.py
++++ b/ims/smali-fixups.py
+@@ -65,11 +65,29 @@ def hook_mmpf_host(root):
+     s = s[:cs] + s[cs:ce].replace(anchor, anchor + '\n\n    ' + hook, 1) + s[ce:]
+     open(f, 'w').write(s); return True
+ 
++def hook_isim_state_monitor(root):
++    # LG telephony-common's LGImsIsimHandler (sticky com.lge.ims.ISIM_STATE_CHANGED) and the
++    # com.lge.ims.phone IIMSPhone service are absent, so nobody tells SIMStateAgent the ISIM is LOADED
++    # -> SUBSCRIBERINCOMPLETED forever. Start TelephonyCompat's in-process publisher of that sticky
++    # intent from SIMStateAgent.<init> (the consumer). Idempotent.
++    f = os.path.join(root, 'com/lge/ims/common/agents/SIMStateAgent.smali')
++    if not os.path.exists(f): return False
++    s = open(f).read()
++    hook = 'invoke-static {}, Lcom/lge/ims/compat/TelephonyCompat;->startIsimStateMonitor()V'
++    if hook in s: return False
++    cs = s.index('.method public constructor <init>()V'); ce = s.index('.end method', cs)
++    body = s[cs:ce]
++    i = body.rindex('return-void')
++    body = body[:i] + hook + '\n\n    ' + body[i:]
++    s = s[:cs] + body + s[ce:]
++    open(f, 'w').write(s); return True
++
+ def main():
+     root = sys.argv[1]
+     for name, fn in [('PhoneStateListenerEx.mSubId', fix_phonestatelistener_subid),
+                      ('TelephonyCallStateRegistry.notify', noop_telephony_registry_notify),
+-                     ('JNIIms.MmpfHost', hook_mmpf_host)]:
++                     ('JNIIms.MmpfHost', hook_mmpf_host),
++                     ('SIMStateAgent.isimMonitor', hook_isim_state_monitor)]:
+         print(f'   smali-fixup {name}: {"applied" if fn(root) else "skip/already"}')
+ 
+ if __name__ == '__main__':
