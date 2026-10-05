@@ -308,12 +308,53 @@ libgui/libbinder/libandroid_runtime/libsurfaceflinger, none of which are in
 dlopen it. LG's stock `ld.config.txt` grants the `com.lge.ims` process access;
 AOSP 24.0's does not. Options: a namespace/`ld.config.txt` entry for the libs,
 or run the stack in a process that already has the system namespace (the Robin
-bridge sidestepped this by living in the RIL/telephony context). A shell-UID
-dlopen test (default namespace, can reach /system/lib) would validate the
-symbol gap for real -- needs a 32-bit ARM harness.
+bridge sidestepped this by living in the RIL/telephony context).
 
-Artefacts: `.scratch/ims4/abigap-ims/`, `abigap-mmpf/` (pulled 24.0 libs +
-seeded siblings).
+### Load test -- both libs LOAD on 24.0 build 20 (2026-10-04)
+
+Confirmed empirically with a hand-built 32-bit ARM PIE dlopen harness
+(`.scratch/ims4/dlopen-harness/`, compiled with the tree's clang against the
+device's pulled libc/libdl) run from `adb shell` (shell UID = default
+namespace, which can reach /system/lib + the staged dir, so it sidesteps the
+app-namespace wall and isolates the ABI question). **`dlopen("libims.so")` and
+`dlopen("libimsmmpf.so")` both succeed**, and since dlopen runs the init-array,
+the static constructors execute without faulting too. The recipe:
+
+- **Real shim** `libimscompat.so` (authored, correct reimpl): `String8::
+  getPathLeaf()` (calls live libutils String8 ctor) + `strndup16to8` (self-
+  contained UTF16->UTF8). ~40 lines, freestanding (`-nostdlibinc`), linked
+  against the device's libutils+libc. Loaded via `LD_PRELOAD` (on 32-bit bionic
+  `RTLD_GLOBAL`=0x2, `RTLD_NOW`=0; the global-group route was unreliable,
+  LD_PRELOAD put it in the global group deterministically).
+- **Load-only stubs** (authored, NOT functional): `libimsvideostub.so` =
+  the 6 mmpf symbols as `__asm__`-named stubs returning 0 (Camera x3, Surface
+  ctor, GraphicBufferMapper::unlock, AudioSystem::setParameters);
+  `libOmxCore.so` = OMX_Init/Deinit/GetHandle/FreeHandle (the only OMX API
+  libimsmmpf calls directly); empty-`.so` stubs for libsurfaceflinger,
+  libOmxVenc, libOmxVdec, libstagefrighthw, libc2dcolorconvert (video/codec HW,
+  co-loading stock copies fails on libbinder vtable thunks e.g.
+  `MemoryHeapBase` -- all video, irrelevant to voice).
+- **Real stock libs supplied** (no framework ABI ties, drop in): libext2_uuid,
+  and the vendor QMI stack libimswms transitively needs -- libqmi, libqmi_cci,
+  libqmi_common_so, libqmi_encdec, libqmi_client_qmux, libqmiservices, libidl,
+  libsmemlog, libmdmdetect, libdsutils, libvss_ims_qcci.
+- **APEX libs** libnativehelper (com.android.art) + libicuuc (com.android.i18n)
+  staged from the device because the shell default namespace lacks the apex
+  links the real app namespace has; not needed in a proper app build.
+- Everything else (libbinder/libgui/libandroid_runtime/libmedia/libcamera_
+  client/libutils/...) resolves to **live 24.0** /system/lib -- not shadowed.
+
+So the dlopen/constructor layer is **cleared** for voice. What remains, in
+order: (1) make `AudioSystem::setParameters` real (only voice-audio symbol
+stubbed); the Surface ctor stays a never-called stub. (2) package this as an app
+namespace (ld.config.txt / sepolicy) so `com.lge.ims` loads it, or host it in
+the telephony process. (3) onCreate/runtime -- untested; the service's
+`ImsSystemServiceImpl` (IImsService 7.0) must come up and the Robin-style
+bridge wire it to AOSP ImsPhone. (4) feed modem reg state (QMI routes above).
+
+Artefacts: `.scratch/ims4/dlopen-harness/` (harness `h`, `shim.cpp`/
+`libimscompat.so`, `videostub.c`, `omxcore.c`, `dev-lib/` pulled device libs),
+`.scratch/ims4/stage/` (the full working lib set), `abigap-ims/`, `abigap-mmpf/`.
 
 Working files (not in the repo): `.scratch/ims4/` (dexes, smali, QMI
 dumps, stock libs, `qmi/imsmmpf.dis` full disassembly + `qmi/plt.txt`
