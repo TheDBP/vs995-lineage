@@ -246,11 +246,14 @@ baksmali of the stock `boot-framework.oat`):
 ## Gaps for a V20 bridge
 
 1. API -- closed. Robin bridge reusable with the one-method AIDL variant.
-2. ABI -- open, the real work. `Ims4` + 32-bit 2016 Qualcomm AP SIP libs
-   against an Android 17 framework; expect the same class of shims the
-   Robin needed (nanopb 0.2.8, Surface sizeof) and unknown new ones.
-   `com.qualcomm.qcrilhook`, `com.android.lge.lgsvcitems`, GBAService
-   must exist or be stubbed.
+2. ABI -- open, but smaller than feared for voice. Measured on 24.0 build 20
+   (`abi-gap.sh`, see "Inert load" below): the SIP core `libims.so` needs only
+   2 shim symbols + 1 stock lib + 1 over-link stub; all the hard ABI work
+   (Surface-ctor sizeof, camera/GraphicBufferMapper/AudioSystem signature
+   drift) is in the media lib `libimsmmpf.so` and is video-call code. Still
+   expect the Robin-class runtime shims (nanopb 0.2.8) and unknowns at
+   onCreate. `com.qualcomm.qcrilhook`, `com.android.lge.lgsvcitems`,
+   GBAService must exist or be stubbed.
 3. Modem hook -- mapped, untested. QMI 0x2bf (media/socket bridge), 0x320
    msg 0x0609 item 0x60039 and 0x2bd NV 0x1063 (registration state) are all
    reachable without LG's RIL; the `oem_rapi` path is not. Whether SIP
@@ -260,6 +263,57 @@ baksmali of the stock `boot-framework.oat`):
    a bridge cannot lean on it to stop the modem waiting for LG IMS reg; the
    modem must be fed reg state the normal way. Open: qcril handler for RIL
    292's siblings (295, 340, 341, 346, 347).
+
+## Inert load on 24.0 (ABI gap), build 20
+
+`Ims4` (`com.lge.ims`, versionName 4.0.20150602, platformBuildVersion 7.0):
+`sharedUserId="android.uid.phone"`, `persistent=true`, own process
+`com.lge.ims`, **targetSdk 24**, native libs **not** in the APK (they live in
+`/system/lib`). The SIP stack libs are **32-bit ARM only** -- and 24.0 is
+`zygote64_32` with a full `/system/lib` 32-bit userspace (`ro.product.cpu.
+abilist` has `armeabi-v7a`), so the 2016 stack can run bit-for-bit. The whole
+stock LG 32-bit `/system/lib` is in `.scratch/ims4/stock/lib/` (every
+DT_NEEDED, incl. `libsurfaceflinger`, `libext2_uuid`, `libOmx*`).
+
+Symbol gap vs the live 24.0 libs (`abi-gap.sh <lib> --keep`, siblings
+pre-seeded into `plat/`):
+
+- `libims.so` (SIP core): 308 imports, **7 unresolved**. 5 are `uuid_*`
+  (`uuid_generate{,_random,_time}`, `uuid_is_null`, `uuid_unparse`) from the
+  absent `libext2_uuid.so` -- pure libc, the stock 32-bit copy drops in. 2 are
+  libutils drops since N: `android::String8::getPathLeaf() const`,
+  `strndup16to8` -- a few-line shim. `libsurfaceflinger.so` is DT_NEEDED but
+  contributes **0 symbols** (over-link) -> empty stub satisfies it. The
+  framework-coupled libs (libbinder/libgui/libandroid_runtime/libutils)
+  resolve cleanly otherwise -- a narrow, ABI-stable slice.
+- `libimsmmpf.so` (media): 240 imports, **7 unresolved**, and this is where the
+  real work is. `qmi_idl_message_decode` (absent `libqmi_encdec.so`, vendor,
+  safe to supply). The other 6 are the predicted ABI landmines, all video:
+  `android::Surface::Surface(sp<IGraphicBufferProducer>&, bool)` (the grown-
+  type ctor -- Surface was 3560->8168 B on the Robin; patch the baked sizeof
+  before shimming), `Camera::connectLegacy`/`setPreviewTarget`/
+  `CameraBase::getCameraInfo` (libcamera_client rewrite), `GraphicBufferMapper
+  ::unlock(native_handle const*)` and `AudioSystem::setParameters(int, String8
+  const&)` (signature drift). `libsurfaceflinger`/`libicuuc` absent but
+  over-link/APEX.
+
+Consequence: voice needs `libims` + `libimsmmpf` to *load* (libims DT_NEEDs
+mmpf), not to do video. Shim the 6 mmpf symbols enough to link; only
+`AudioSystem::setParameters` plausibly touches the voice audio path and must be
+correct. Video correctness is deferrable.
+
+First real wall is **not symbols but the linker namespace**: libims pulls
+libgui/libbinder/libandroid_runtime/libsurfaceflinger, none of which are in
+`/system/etc/public.libraries.txt`, so an app classloader namespace cannot
+dlopen it. LG's stock `ld.config.txt` grants the `com.lge.ims` process access;
+AOSP 24.0's does not. Options: a namespace/`ld.config.txt` entry for the libs,
+or run the stack in a process that already has the system namespace (the Robin
+bridge sidestepped this by living in the RIL/telephony context). A shell-UID
+dlopen test (default namespace, can reach /system/lib) would validate the
+symbol gap for real -- needs a 32-bit ARM harness.
+
+Artefacts: `.scratch/ims4/abigap-ims/`, `abigap-mmpf/` (pulled 24.0 libs +
+seeded siblings).
 
 Working files (not in the repo): `.scratch/ims4/` (dexes, smali, QMI
 dumps, stock libs, `qmi/imsmmpf.dis` full disassembly + `qmi/plt.txt`
