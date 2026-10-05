@@ -490,14 +490,42 @@ Fixes it took, in order hit:
 - Verify stubs (`gen-verify-stubs.py`) for LG framework classes incl.
   `com.android.lge.lgsvcitems.LgSvcCmd`.
 
+- **`lgeims_mmpf`** (LG media engine: RTP, AMR/EVS, vocoder; `AudioAdaptor` needs
+  it, so VOICE needs it) is now hosted in-process: `MmpfHost.start()` (extra-smali,
+  hooked into `JNIIms.<clinit>` after `loadLibrary`) -> JNI in libimscompat ->
+  `android::MMPFService::instantiate()` found in libimsmmpf.so via
+  `dl_iterate_phdr` + GNU-hash walk (a public system lib cannot `dlopen` an
+  apk-bundled lib: dlopen resolves in the CALLER's namespace). Stock publishes it
+  from the persistent `com.lge.imsvt` process (libimsvtjni). `service list` shows
+  `lgeims_mmpf: [com.lge.mmpf.MMPFService]`, libims's 5 s poll stops, MMPF engine
+  init runs (`MMPF_VER_2.0.0_160519`).
+- **libimswms NULL-format crash** (hit as soon as mmpf unblocked the SMS-over-IP app
+  init): every `ALOGE` in libimswms is `__android_log_print(6, tag, NULL, "fmt", ...)`
+  -- real format as the first vararg -- so any WMS error path segfaults in vsnprintf
+  (stock liblog has no NULL check either; stock simply never hit the paths).
+  Fixed in build-ims4.sh: `rename-import.py` rewrites libimswms's import to
+  `__lgims_log_nullfmt` (same length) + `add-needed libimscompat.so`; the shim
+  pulls the format from the varargs when fmt is NULL.
+
 Open, next:
-- **`lgeims_mmpf` not published** (libims polls every 5 s). It is LG's media
-  engine (RTP, AMR/EVS, vocoder -- `AudioAdaptor` needs it, so VOICE needs it).
-  `android::MMPFService::instantiate()` is in libimsmmpf.so (already loaded in
-  com.lge.ims); on stock the persistent `com.lge.imsvt` process calls it from
-  libimsvtjni's JNI_OnLoad. Plan: host in-process -- JNI entry in libimscompat
-  that dlsym's `_ZN7android11MMPFService11instantiateEv`, smali hook after
-  `loadLibrary("ims")`.
+- **SMS over IMS needs `imswmsproxy`** (not shipped yet). libimswms (`SoIClient::
+  ConnectSC` -> `AndroidWMS::Init`) talks AF_UNIX/SOCK_DGRAM over ABSTRACT sockets:
+  binds `@/tmp/ims/wms/wms_user_static` (or `wms_user`), sends to
+  `@/tmp/ims/wms/wms_proxy` -> ECONNREFUSED today, so SoI init fails (non-fatal
+  after the fix above; SMS stays on CS). The listener is stock
+  `/system/bin/imswmsproxy` (14 KB, 64-bit; init.elsa_product.rc: `class main,
+  user system, group radio system net_admin net_raw`; sepolicy domain
+  `imswmsproxy`, `imswmsproxy_exec`). It registers as the QMI WMS *transport
+  layer* (`qmi_wms_transport_init/reg_mo_sms_cb/rpt_ind/nw_reg_status_update/
+  cap_update` from `libqmi_wms_client_helper.so`, stock /system/vendor/lib64,
+  22 KB; that lib needs libqmiservices, libqmi_cci, libcutils, `wms_get_service_
+  object_internal_v01`) so the modem hands MO SMS to the IMS stack and takes MT
+  SMS back. Closure is small and all-C: ship both as vendor prebuilts
+  (`vendor/bin` + `vendor/lib64`, our vendor already has the Oreo libqmi*), an
+  init rc service, and a sepolicy domain (abstract unix dgram socket to radio
+  app + qmux). Stock dump: `.scratch/kdz/vs995/parts/system.image`
+  (`debugfs -R 'dump /bin/imswmsproxy ...'`, `/vendor/lib64/libqmi_wms_client_
+  helper.so`); stock rc in boot.image ramdisk (`undz.py -s 27`).
 - QMI `svc_id 703` (0x2bf, LG `lge_ims`) TXN send errors / `qmi_client_
   register_error_cb` -- modem side of the hook (see above section); check
   `/dev/smd*`/qmuxd access under radio once sepolicy is tightened.

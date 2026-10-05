@@ -1,0 +1,269 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:56:36 -0400
+Subject: [PATCH] msm8996-common: host lgeims_mmpf in com.lge.ims; libimswms
+ NULL-format log shim
+
+lgeims_mmpf (LG media engine, needed by libims AudioAdaptor for voice) is
+published on stock by the persistent com.lge.imsvt process. Host it in-process
+instead: MmpfHost.start() (extra-smali, hooked into JNIIms.<clinit> after
+loadLibrary) -> Java_com_lge_ims_compat_MmpfHost_instantiate in libimscompat ->
+android::MMPFService::instantiate() located in the apk-bundled libimsmmpf via
+dl_iterate_phdr + GNU hash (dlopen resolves in the caller's namespace, so a
+public system lib cannot dlopen an app-bundled lib).
+
+With mmpf up the SMS-over-IP app initialises and hits libimswms error paths,
+which all call __android_log_print(6, tag, NULL, "fmt", ...) -> vsnprintf(NULL)
+SIGSEGV. build-ims4.sh now renames libimswms's import to __lgims_log_nullfmt
+(forge rename-import.py, same-length .dynstr rewrite) and libimscompat provides
+it (NULL fmt -> first vararg). build-ims4.sh: fix BUILD_ROOT default, absolutize
+inputs (relative smali-fw became a dangling symlink).
+
+---
+ ims/build-ims4.sh                             | 11 ++-
+ .../com/lge/ims/compat/MmpfHost.smali         | 36 ++++++++
+ ims/libimscompat/Android.bp                   |  2 +
+ ims/libimscompat/imscompat.cpp                | 92 +++++++++++++++++++
+ ims/smali-fixups.py                           | 18 +++-
+ 5 files changed, 156 insertions(+), 3 deletions(-)
+ create mode 100644 ims/extra-smali/com/lge/ims/compat/MmpfHost.smali
+
+diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
+index 57f10dd7..1fb8ed55 100755
+--- a/ims/build-ims4.sh
++++ b/ims/build-ims4.sh
+@@ -25,11 +25,14 @@ set -euo pipefail
+ APK="${1:?usage: build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp> <framework-smali> <stock-libs-dir> <out.apk>}"
+ IMSCOMMON="${2:?boot-ims-common.oat}"; BOOTCP="${3:?system.image or bootcp dir}"; FWSMALI="${4:?framework smali dir}"
+ STOCKLIBS="${5:?stock-libs-dir (32-bit LG SIP + QMI libs)}"; OUT="${6:?out.apk}"
++# absolutize: the work dir symlinks to FWSMALI and the forge tools cd around
++APK="$(readlink -f "$APK")"; IMSCOMMON="$(readlink -f "$IMSCOMMON")"; BOOTCP="$(readlink -f "$BOOTCP")"
++FWSMALI="$(readlink -f "$FWSMALI")"; STOCKLIBS="$(readlink -f "$STOCKLIBS")"; OUT="$(readlink -f "$(dirname "$OUT")")/$(basename "$OUT")"
+ LG_LIBS="libims libimsmmpf libimswms libext2_uuid libvss_ims_qcci libdiag libssl libcrypto libjpeg libqmi libqmi_cci libqmi_common_so libqmi_encdec libqmi_client_qmux libqmiservices libidl libsmemlog libmdmdetect libdsutils"
+ HERE="$(cd "$(dirname "$0")" && pwd)"
+ FORGE="${FORGE:-$HERE/../../../../../forge}"; [ -d "$FORGE/tools" ] || FORGE="${FORGE_DIR:?set FORGE to the forge dir}"
+ T="$HERE/.work"; rm -rf "$T"; mkdir -p "$T"
+-S="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)/build_output}/src"
++S="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)}/src"   # HERE is <build_output>/src/device/lge/msm8996-common/ims
+ AIDL="$S/prebuilts/build-tools/linux-x86/bin/aidl"
+ JAVAC="$(for v in jdk21 jdk17 jdk11; do c="$S/prebuilts/jdk/$v/linux-x86/bin/javac"; [ -x "$c" ] && echo "$c" && break; done)"
+ AJAR="$S/prebuilts/sdk/current/public/android.jar"
+@@ -37,7 +40,7 @@ R8="$S/prebuilts/r8/r8.jar"; BK="$S/prebuilts/extract-tools/common/smali/baksmal
+ 
+ echo ">> 1. deodex Ims4.apk + boot-ims-common"
+ "$FORGE/tools/oat-to-smali.sh" "$APK" "$T/smali-ims4" >/dev/null
+-BUILD_ROOT="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)/build_output}" "$FORGE/tools/deodex-jar.sh" "$IMSCOMMON" "$BOOTCP" "$T/smali-imscommon" >/dev/null
++BUILD_ROOT="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)}" "$FORGE/tools/deodex-jar.sh" "$IMSCOMMON" "$BOOTCP" "$T/smali-imscommon" >/dev/null
+ 
+ echo ">> 2. regenerate the legacy AIDL interfaces -> clean smali"
+ IFACES="$(tr '\n' ' ' < "$HERE/iface-list.txt") IImsExternalCallStateListener IImsVideoCallCallback"
+@@ -99,6 +102,10 @@ for d in libsurfaceflinger.so libOmxCore.so libOmxVenc.so libOmxVdec.so libstage
+   "$PE" --remove-needed "$d" "$T/lib/armeabi-v7a/libimsmmpf.so" 2>/dev/null || true
+ done
+ "$PE" --add-needed libimscompat.so "$T/lib/armeabi-v7a/libimsmmpf.so"
++# libimswms logs every error with fmt=NULL (real format is the first vararg) -> vsnprintf segfault.
++# Point its import at libimscompat's NULL-tolerant __lgims_log_nullfmt (same-length rename).
++python3 "$FORGE/tools/rename-import.py" "$T/lib/armeabi-v7a/libimswms.so" __android_log_print __lgims_log_nullfmt
++"$PE" --add-needed libimscompat.so "$T/lib/armeabi-v7a/libimswms.so"
+ echo "   bundled $(ls "$T/lib/armeabi-v7a" | wc -l) libs, DT_NEEDED fixed"
+ 
+ # Collision rename: a bundled lib whose name also exists in /system/lib (newer, incompatible ABI)
+diff --git a/ims/extra-smali/com/lge/ims/compat/MmpfHost.smali b/ims/extra-smali/com/lge/ims/compat/MmpfHost.smali
+new file mode 100644
+index 00000000..cc2a0115
+--- /dev/null
++++ b/ims/extra-smali/com/lge/ims/compat/MmpfHost.smali
+@@ -0,0 +1,36 @@
++# Hosts the "lgeims_mmpf" binder service (android::MMPFService in libimsmmpf.so) inside com.lge.ims.
++# Stock runs it in the persistent com.lge.imsvt process; we have no ImsVT. instantiate() lives in
++# libimscompat.so (a public system lib, hence loadLibrary from the app works); it finds the already
++# loaded libimsmmpf and calls MMPFService::instantiate(). Called from JNIIms.<clinit> right after
++# loadLibrary("ims") succeeds (smali-fixups.py). Never throws: a failure only means no media engine.
++.class public final Lcom/lge/ims/compat/MmpfHost;
++.super Ljava/lang/Object;
++
++.method public static native instantiate()I
++.end method
++
++.method public static start()V
++    .registers 3
++    :try_start_0
++    const-string v0, "imscompat"
++    invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
++    invoke-static {}, Lcom/lge/ims/compat/MmpfHost;->instantiate()I
++    move-result v0
++    new-instance v1, Ljava/lang/StringBuilder;
++    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
++    const-string v2, "MmpfHost :: MMPFService::instantiate rc="
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    invoke-virtual {v1, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    move-result-object v1
++    invoke-static {v1}, Lcom/lge/ims/common/log/ImsLog;->i(Ljava/lang/String;)V
++    :try_end_0
++    .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
++    return-void
++    :catch_0
++    move-exception v0
++    const-string v1, "MmpfHost :: failed"
++    invoke-static {v1}, Lcom/lge/ims/common/log/ImsLog;->e(Ljava/lang/String;)V
++    invoke-virtual {v0}, Ljava/lang/Throwable;->printStackTrace()V
++    return-void
++.end method
+diff --git a/ims/libimscompat/Android.bp b/ims/libimscompat/Android.bp
+index 499c1591..16a78f88 100644
+--- a/ims/libimscompat/Android.bp
++++ b/ims/libimscompat/Android.bp
+@@ -8,6 +8,8 @@ cc_library_shared {
+     // impls. libbinder is NOT linked -- our Parcel symbols must interpose it, not depend on it; the
+     // real impls are reached at runtime via RTLD_NEXT (libims pulls libbinder into the namespace).
+     shared_libs: ["libutils", "libdl", "liblog"],
++    // jni.h for the MmpfHost entry point.
++    header_libs: ["jni_headers"],
+     // The asm-named load-only stubs deliberately redefine platform symbols; allow it.
+     cflags: ["-Wno-error"],
+     compile_multilib: "32",
+diff --git a/ims/libimscompat/imscompat.cpp b/ims/libimscompat/imscompat.cpp
+index 536774a0..bc9e1dc3 100644
+--- a/ims/libimscompat/imscompat.cpp
++++ b/ims/libimscompat/imscompat.cpp
+@@ -16,11 +16,25 @@
+ //     strndup16to8).
+ //   * LOAD-ONLY stubs for libimsmmpf's video/OMX symbols -- voice never calls them. AudioSystem::
+ //     setParameters is a stub; make it real before the voice audio path works (see IMS.md).
++//   * MMPF HOST (JNI). The "lgeims_mmpf" binder service libims's AudioAdaptor needs is implemented in
++//     libimsmmpf.so (android::MMPFService::instantiate()); stock publishes it from the separate
++//     persistent com.lge.imsvt process via libimsvtjni. We host it in com.lge.ims itself:
++//     com.lge.ims.compat.MmpfHost.instantiate() (extra-smali, hooked after loadLibrary("ims")) calls
++//     Java_com_lge_ims_compat_MmpfHost_instantiate below.
++//   * NULL-FORMAT LOG. libimswms (SMS over IP) passes fmt=NULL and the real format as the first
++//     vararg to __android_log_print on EVERY error path -- a 2016 bug stock never hit because its
++//     error paths never ran (imswmsproxy was always up). On A17 vsnprintf(NULL) segfaults and kills
++//     com.lge.ims. build-ims4.sh renames libimswms's import to __lgims_log_nullfmt (same length,
++//     rename-import.py) and this lib provides it: NULL fmt -> take the next vararg as the format.
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstdlib>
+ #include <cstring>
++#include <cstdarg>
+ #include <dlfcn.h>
++#include <elf.h>
++#include <link.h>
++#include <jni.h>
+ 
+ #include <android/log.h>
+ 
+@@ -271,3 +285,81 @@ long _imsc_cl(void) { return 0; } long _imsc_pt(void) { return 0; } long _imsc_c
+ long _imsc_un(void) { return 0; } long _imsc_su(void) { return 0; } long _imsc_ap(void) { return 0; }
+ int OMX_Init(void) { return 0; } int OMX_Deinit(void) { return 0; } int OMX_GetHandle(void) { return 0; } int OMX_FreeHandle(void) { return 0; }
+ }
++
++// ---------------------------------------------------------------------------------------------------
++// MMPF host: call android::MMPFService::instantiate() inside libimsmmpf.so.
++//
++// libimsmmpf is an APK-BUNDLED lib living in the app classloader namespace; this library is a public
++// system lib in the default namespace, so a plain dlopen("libimsmmpf.so") from here cannot see it
++// (dlopen resolves in the CALLER's namespace). dl_iterate_phdr walks every loaded object regardless of
++// namespace, so find libimsmmpf by soname there and look the symbol up by hand in its GNU hash table.
++namespace {
++struct FindLib { const char* soname; ElfW(Addr) base; const ElfW(Phdr)* phdr; int phnum; };
++
++int find_lib_cb(dl_phdr_info* info, size_t, void* data) {
++    FindLib* f = static_cast<FindLib*>(data);
++    const char* n = info->dlpi_name ? strrchr(info->dlpi_name, '/') : nullptr;
++    n = n ? n + 1 : info->dlpi_name;
++    if (!n || strcmp(n, f->soname) != 0) return 0;
++    f->base = info->dlpi_addr; f->phdr = info->dlpi_phdr; f->phnum = info->dlpi_phnum;
++    return 1;
++}
++
++uint32_t gnu_hash(const char* s) {
++    uint32_t h = 5381;
++    for (; *s; ++s) h = h * 33 + static_cast<unsigned char>(*s);
++    return h;
++}
++
++// Address of `sym` in the loaded `soname`, or nullptr. GNU_HASH only (what 2016 AOSP emitted).
++void* lookup_in_lib(const char* soname, const char* sym) {
++    FindLib f{soname, 0, nullptr, 0};
++    if (!dl_iterate_phdr(find_lib_cb, &f) || !f.phdr) return nullptr;
++    const ElfW(Dyn)* dyn = nullptr;
++    for (int i = 0; i < f.phnum; i++)
++        if (f.phdr[i].p_type == PT_DYNAMIC) dyn = reinterpret_cast<const ElfW(Dyn)*>(f.base + f.phdr[i].p_vaddr);
++    if (!dyn) return nullptr;
++    const ElfW(Sym)* symtab = nullptr; const char* strtab = nullptr; const uint32_t* gh = nullptr;
++    for (; dyn->d_tag != DT_NULL; ++dyn) {
++        if (dyn->d_tag == DT_SYMTAB) symtab = reinterpret_cast<const ElfW(Sym)*>(f.base + dyn->d_un.d_ptr);
++        else if (dyn->d_tag == DT_STRTAB) strtab = reinterpret_cast<const char*>(f.base + dyn->d_un.d_ptr);
++        else if (dyn->d_tag == DT_GNU_HASH) gh = reinterpret_cast<const uint32_t*>(f.base + dyn->d_un.d_ptr);
++    }
++    if (!symtab || !strtab || !gh) return nullptr;
++    const uint32_t nbuckets = gh[0], symoffset = gh[1], bloom_size = gh[2];
++    const ElfW(Addr)* bloom = reinterpret_cast<const ElfW(Addr)*>(gh + 4);
++    const uint32_t* buckets = reinterpret_cast<const uint32_t*>(bloom + bloom_size);
++    const uint32_t* chains = buckets + nbuckets;
++    const uint32_t h = gnu_hash(sym);
++    uint32_t i = buckets[h % nbuckets];
++    if (i == 0) return nullptr;
++    for (;; ++i) {
++        const uint32_t h2 = chains[i - symoffset];
++        if ((h | 1) == (h2 | 1) && strcmp(strtab + symtab[i].st_name, sym) == 0)
++            return reinterpret_cast<void*>(f.base + symtab[i].st_value);   // thumb bit preserved
++        if (h2 & 1) return nullptr;
++    }
++}
++}  // namespace
++
++extern "C" JNIEXPORT jint JNICALL Java_com_lge_ims_compat_MmpfHost_instantiate(JNIEnv*, jclass) {
++    typedef void (*F)();
++    F f = reinterpret_cast<F>(lookup_in_lib("libimsmmpf.so", "_ZN7android11MMPFService11instantiateEv"));
++    if (!f) {
++        __android_log_print(ANDROID_LOG_ERROR, "libimscompat", "MmpfHost: libimsmmpf.so / MMPFService::instantiate not found");
++        return -1;
++    }
++    f();
++    __android_log_print(ANDROID_LOG_INFO, "libimscompat", "MmpfHost: MMPFService::instantiate() done (lgeims_mmpf hosted in-process)");
++    return 0;
++}
++
++// ---- libimswms's NULL-format __android_log_print (see header). Exact __android_log_print ABI.
++extern "C" int __lgims_log_nullfmt(int prio, const char* tag, const char* fmt, ...) {
++    va_list ap;
++    va_start(ap, fmt);
++    if (!fmt) fmt = va_arg(ap, const char*);
++    int rc = fmt ? __android_log_vprint(prio, tag, fmt, ap) : 0;
++    va_end(ap);
++    return rc;
++}
+diff --git a/ims/smali-fixups.py b/ims/smali-fixups.py
+index 4313822b..1b7a3330 100644
+--- a/ims/smali-fixups.py
++++ b/ims/smali-fixups.py
+@@ -50,10 +50,26 @@ def noop_telephony_registry_notify(root):
+     s = s[:i] + body + s[end:]
+     open(f, 'w').write(s); return True
+ 
++def hook_mmpf_host(root):
++    # Publish "lgeims_mmpf" from inside com.lge.ims (see extra-smali com/lge/ims/compat/MmpfHost.smali):
++    # splice MmpfHost.start() into JNIIms.<clinit> right after the successful loadLibrary("ims"), i.e.
++    # once libimsmmpf is in the process. Idempotent.
++    f = os.path.join(root, 'com/lge/ims/common/jni/JNIIms.smali')
++    if not os.path.exists(f): return False
++    s = open(f).read()
++    hook = 'invoke-static {}, Lcom/lge/ims/compat/MmpfHost;->start()V'
++    if hook in s: return False
++    anchor = 'invoke-static {v1}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V'
++    cs = s.index('.method static constructor <clinit>()V'); ce = s.index('.end method', cs)
++    if anchor not in s[cs:ce]: return False
++    s = s[:cs] + s[cs:ce].replace(anchor, anchor + '\n\n    ' + hook, 1) + s[ce:]
++    open(f, 'w').write(s); return True
++
+ def main():
+     root = sys.argv[1]
+     for name, fn in [('PhoneStateListenerEx.mSubId', fix_phonestatelistener_subid),
+-                     ('TelephonyCallStateRegistry.notify', noop_telephony_registry_notify)]:
++                     ('TelephonyCallStateRegistry.notify', noop_telephony_registry_notify),
++                     ('JNIIms.MmpfHost', hook_mmpf_host)]:
+         print(f'   smali-fixup {name}: {"applied" if fn(root) else "skip/already"}')
+ 
+ if __name__ == '__main__':
