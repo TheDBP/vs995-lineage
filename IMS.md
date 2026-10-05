@@ -140,12 +140,38 @@ Route B, VZW only (`setRegiStateForVZW(appType=10, .., registered)`):
        req u32 item, resp {result, u32, u32, u8[1024]}); arg1==2 -> 0x0603
        (only for arg0 in {1,3}).
 
+Route C, hVoLTE (`setRegServiceToModem` -> `setSysInfo(0x64, sysMode,
+service, "")` -> `RIL.setImsRegistrationForHVoLTE`):
+
+    RIL_REQUEST_UPDATE_IMS_STATUS_REQ 292 (0x124)
+    -> lge_qcril_qmi_nas_hvolte_update_ims_status_request (client lge_hvolte_client,
+       bound to the stock NAS service object)
+    -> qmi_client_send_msg_sync(NAS 0x03, msg 0x0072, req 520 bytes, 30 s)
+       req: TLV 0x01 enum8 ims_status; TLV 0x02 struct[64] var-len {u32 radio_if; u8 status}
+       (standard Qualcomm NAS `update_ims_status`, present in libqmiservices' NAS IDL --
+       not LG-specific)
+
 VZW extras from the same agent: `setSysInfo(0x10, 0xc8, -1, str)` ->
 sendEnvelope (SIM toolkit); `setImsStatusToModem(1, provisioned&&enabled, 0,
 slot)` -> RIL 453 (0x1c5) VSS_SET_IMS_STATUS, parcel {4, type, state,
-reason, slot} (qcril handler not located yet); `setRegServiceToModem` ->
-`setSysInfo(0x64, sysMode, service, "")` -> setImsRegistrationForHVoLTE
-(RIL id not located yet).
+reason, slot} -> `qcril_qmi_lge_vss_set_ims_status` -> lge_vss 0x320 msg
+0x0703 req {u32 type; u32 state; u32 reason; u32 slot} (500 ms).
+
+Modem side (strings from the stock `modem.b*` segments, `.scratch/ims4/
+modem-strings.txt`): 0x0703 lands in `qmi_vss_common_service.c:
+qmi_vss_set_ims_status_req` -> `cmss.c: lgp_set_ims_status(type, state)`
+(type LGP_IMS_STATE_TYPE_ADV_CALLING = "advanced calling" on/off). The
+registration info feeds Call Manager domain selection, `cmsds.c` ("[hVoLTE]
+cmsds_clear_lgims_reg_info", "IMS deregistered for voice while operating in
+CSFB mode, switch to SRLTE mode", "lgims_callstatus", "send
+STATUS_LTE_GET_CURRENT_IMS_STATUS to LGIMS") -- i.e. SRLTE vs 1xCSFB mode
+switching and scan gating during VoLTE calls. CM knows a "3rd Part[y] IMS
+Enabled" mode ("LG IMS Doesn't send IMS REG Information when comback to
+In-SVC"); which EFS/NV item selects it is not identified. Relevant modem EFS
+items: `/nv/item_files/ims/IMS_enable`, `/nv/item_files/modem/vap/hvoltelte`,
+`/nv/item_files/modem/hvolte/*`, `/nv/item_files/modem/mmode/
+{ims_reg_status_wait_timer,ssac_hvolte}`. Only ~51k strings survive in
+the segments (rest compressed), so absence of a string proves nothing.
 
 `IMSPhone.setSysInfo(type, ..)` dispatch: 0x1 setBalItem, 0x5 detachLte,
 0xb setDan, 0xd setEmergency, 0x10 sendEnvelope, 0x12 setImsRegistration,
@@ -167,10 +193,10 @@ Ims4 also reports state AP-side only: `TelephonyManager.setImsRegistrationState`
 `com.android.lge.lgsvcitems.LgSvcCmd` (property-style get/set, not a modem
 path).
 
-Implication for a bridge: both modem hooks are plain QMI writes to LG vendor
-services that are live on the modem (0x320 msg 0x0609 item 0x60039; 0x2bd
-NV 0x1063) -- reachable from a QMI client without LG's RIL or qcril, same as
-0x2bf. What the modem does with them (domain selection / SRVCC gating is
+Implication for a bridge: every modem hook is a plain QMI write to a service
+that is live on the modem (0x320 msgs 0x0609/0x0703; 0x2bd NV 0x1063; stock
+NAS 0x0072) -- reachable from a QMI client without LG's RIL or qcril, same
+as 0x2bf. NAS 0x0072 is the one a non-LG IMS stack would normally send. What the modem does with them (domain selection / SRVCC gating is
 the guess) is untested.
 
 ## Binder surface of `Ims4` vs the Robin bridge
@@ -211,8 +237,9 @@ baksmali of the stock `boot-framework.oat`):
    msg 0x0609 item 0x60039 and 0x2bd NV 0x1063 (registration state) are all
    reachable without LG's RIL; the `oem_rapi` path is not. Whether SIP
    registration works with only these served, and what the modem does with
-   the registration writes, is untested. Open: qcril handler for RIL 453,
-   RIL id for setImsRegistrationForHVoLTE.
+   the registration writes beyond domain selection, is untested. Open: the
+   EFS item behind CM's "3rd party IMS" mode; qcril handler for RIL 292's
+   siblings (295, 340, 341, 346, 347).
 
 Working files (not in the repo): `.scratch/ims4/` (dexes, smali, QMI
 dumps, stock libs, `qmi/imsmmpf.dis` full disassembly + `qmi/plt.txt`
