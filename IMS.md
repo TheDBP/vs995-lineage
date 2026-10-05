@@ -165,13 +165,31 @@ registration info feeds Call Manager domain selection, `cmsds.c` ("[hVoLTE]
 cmsds_clear_lgims_reg_info", "IMS deregistered for voice while operating in
 CSFB mode, switch to SRLTE mode", "lgims_callstatus", "send
 STATUS_LTE_GET_CURRENT_IMS_STATUS to LGIMS") -- i.e. SRLTE vs 1xCSFB mode
-switching and scan gating during VoLTE calls. CM knows a "3rd Part[y] IMS
-Enabled" mode ("LG IMS Doesn't send IMS REG Information when comback to
-In-SVC"); which EFS/NV item selects it is not identified. Relevant modem EFS
-items: `/nv/item_files/ims/IMS_enable`, `/nv/item_files/modem/vap/hvoltelte`,
-`/nv/item_files/modem/hvolte/*`, `/nv/item_files/modem/mmode/
-{ims_reg_status_wait_timer,ssac_hvolte}`. Only ~51k strings survive in
-the segments (rest compressed), so absence of a string proves nothing.
+switching and scan gating during VoLTE calls.
+
+The "3rd Part[y] IMS Enabled" mode ("LG IMS Doesn't send IMS REG Information
+when comback to In-SVC") is **not selected by any EFS item on this modem** --
+it is dead code here. Chased into the q6zip-compressed code segment (seg 17 @
+0xc4a22000 decompresses to VA 0xd0000000; `nlitsme/qualcomm-q6zip` q6unzip.py,
+lookback 7, no per-page meta prefix): the branch sits in a `cmsds.c`
+domain-selection function at VA 0xd0065c74 (main) / 0xd0065c84 (HYBR2) /
+0xd00659e8 (HYBR3) and fires only when the Call Manager control block (`cmsds`
+global at VA 0xd0d1f53e) byte `+0x7d` == 2, additionally gated by the event's
+srv_domain (`msg+0x25` == 2, i.e. PS) and `cmsds+0x98` == 1. That `+0x7d`
+selector byte is **read-only across the entire image** -- no store reaches it
+in the q6-compressed code, none in the uncompressed segments, and no data
+pointer to it exists in any segment; it lies in demand-zero BSS (offset 0x4f5bb
+into the dlpager region, past the 0x42000 the delta segment @0xc51e9000
+initializes), so it defaults to 0. Nothing arms it. The CM note describing an
+EFS selector refers to a different/newer modem; LG left the hook dangling on
+vs995.
+
+Relevant modem EFS items that *are* wired (all hVoLTE/SRLTE tuning, none the
+3rd-party selector): `/nv/item_files/ims/IMS_enable`,
+`/nv/item_files/modem/vap/hvoltelte`, `/nv/item_files/modem/hvolte/*`,
+`/nv/item_files/modem/mmode/{ims_reg_status_wait_timer,ssac_hvolte}`. Only
+~51k strings survive uncompressed in the segments (rest in q6zip); decompress
+seg 17 to read the rest (see `docs/debugging-volte.md`).
 
 `IMSPhone.setSysInfo(type, ..)` dispatch: 0x1 setBalItem, 0x5 detachLte,
 0xb setDan, 0xd setEmergency, 0x10 sendEnvelope, 0x12 setImsRegistration,
@@ -237,11 +255,16 @@ baksmali of the stock `boot-framework.oat`):
    msg 0x0609 item 0x60039 and 0x2bd NV 0x1063 (registration state) are all
    reachable without LG's RIL; the `oem_rapi` path is not. Whether SIP
    registration works with only these served, and what the modem does with
-   the registration writes beyond domain selection, is untested. Open: the
-   EFS item behind CM's "3rd party IMS" mode; qcril handler for RIL 292's
-   siblings (295, 340, 341, 346, 347).
+   the registration writes beyond domain selection, is untested. CM's "3rd
+   party IMS" mode is dead code here (cmsds+0x7d, never set -- see above), so
+   a bridge cannot lean on it to stop the modem waiting for LG IMS reg; the
+   modem must be fed reg state the normal way. Open: qcril handler for RIL
+   292's siblings (295, 340, 341, 346, 347).
 
 Working files (not in the repo): `.scratch/ims4/` (dexes, smali, QMI
 dumps, stock libs, `qmi/imsmmpf.dis` full disassembly + `qmi/plt.txt`
 PLT-to-symbol map, `qmi/{set_modem_info,set_lg_ims_reg_state,raw_cmd}.dis`,
-`smali-telcommon/`), `.scratch/kdz/vs995/parts/system.image`.
+`smali-telcommon/`, `modem.elf` reassembled firmware, `q6.bin` decompressed
+q6zip image @VA 0xd0000000 + `q6.dis`, `modem-uncomp.dis`, `modem-map.py`/
+`msgconst.py`/`strref.py` xref helpers), `.scratch/kdz/vs995/parts/
+system.image`.
