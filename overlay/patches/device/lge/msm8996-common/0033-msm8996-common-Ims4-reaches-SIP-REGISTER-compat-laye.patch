@@ -31,7 +31,6 @@ with apply-method-redirects.py.
 
 Result on T-Mobile: IMS PDN up, VoPS true, REGISTER with Security-Client sent,
 401 AKAv1-MD5 challenge received. The IPsec helpers are the next commit.
-
 ---
  ims/build-ims4.sh                             |  15 +-
  .../android/internal/telephony/IIMSPhone.java |  14 +

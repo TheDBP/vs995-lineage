@@ -18,7 +18,6 @@ SIGSEGV. build-ims4.sh now renames libimswms's import to __lgims_log_nullfmt
 (forge rename-import.py, same-length .dynstr rewrite) and libimscompat provides
 it (NULL fmt -> first vararg). build-ims4.sh: fix BUILD_ROOT default, absolutize
 inputs (relative smali-fw became a dangling symlink).
-
 ---
  ims/build-ims4.sh                             | 11 ++-
  .../com/lge/ims/compat/MmpfHost.smali         | 36 ++++++++

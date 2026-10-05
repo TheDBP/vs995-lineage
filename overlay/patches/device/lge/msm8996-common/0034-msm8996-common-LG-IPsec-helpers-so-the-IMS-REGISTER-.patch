@@ -18,7 +18,6 @@ stock init services (starter: uid system; client: root, disabled, started
 on demand through ctl.start), and product-private sepolicy: ipsecstarter and
 ipsecclient coredomains, exec labels, and ctl.start$ipsecclient as a
 system_internal_prop (a coredomain may only set system_property_type).
-
 ---
  ims/.gitignore                     |  2 ++
  ims/Android.bp                     | 31 ++++++++++++++++++++++++++++++

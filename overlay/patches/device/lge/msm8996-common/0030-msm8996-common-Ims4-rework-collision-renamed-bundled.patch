@@ -10,7 +10,6 @@ pair must stay matched), rename any bundled lib whose name also exists in /syste
 incompatible system copy first), store lib/ uncompressed, and run smali-fixups.py after the method
 redirects. New verify stubs under extra-smali (LG framework classes absent on 24.0, incl.
 com.android.lge.lgsvcitems.LgSvcCmd -- '' matches the app's own null fallback) and more redirects.
-
 ---
  ims/.gitignore                                |   1 +
  ims/build-ims4.sh                             |  23 +-

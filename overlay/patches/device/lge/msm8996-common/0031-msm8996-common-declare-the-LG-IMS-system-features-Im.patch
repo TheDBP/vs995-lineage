@@ -10,7 +10,6 @@ service -- when PackageManager.hasSystemFeature("com.lge.server.ims") is true. S
 com.lge.ims.xml; VT/VoWiFi/mmpfservice left out for Flash A). Verified: 'service check ims' found,
 'start :: ims system server' logged. Note: no '--' inside XML comments, SystemConfig silently skips
 an unparseable file.
-
 ---
  ims/ims.mk               |  5 +++++
  ims/lge-ims-features.xml | 16 ++++++++++++++++
