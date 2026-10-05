@@ -95,11 +95,83 @@ Reading: the modem hosts an MMPF-compatible media session engine
 IMS PDN; libimsmmpf also carries its own RTP/SRTP stack and video codecs.
 Not yet decoded: the layouts of `_tMMPFRequest`, `_tMMPFProperty`,
 `_tSocketBridgeParam`, `_tMMPFNetworkInfo`, `_tMMPFPortInfo`,
-`RtpSessionInfoInd`, `_tMMPFResponseEvent_UKnight`, and how `Ims4`/`libims.so`
-tells the modem the SIP registration state -- not via qcrilhook (Ims4's
-`ImsQcRilHook` only does TuneAway enable/disable); SRVCC goes through
-`SrvccStateTracker`/`ISystemAPISRVCC`; `com.android.lge.lgsvcitems.LgSvcCmd`
-is the remaining candidate (LG RIL OEM request).
+`RtpSessionInfoInd`, `_tMMPFResponseEvent_UKnight`. Registration state
+takes a different path (next section).
+
+## How registration state reaches the modem
+
+Not through 0x2bf and not through qcrilhook (Ims4's `ImsQcRilHook` only does
+TuneAway). `Ims4` -> Binder `com.lge.ims.phone`
+(`com.android.internal.telephony.IIMSPhone`, impl `IMSPhone` inside the
+stock `telephony-common.jar`) -> LG `RIL` OEM requests -> LG qcril
+(`/vendor/lib64/libril-qc-qmi-1.so`) -> LG vendor QMI services. Traced from
+`com.lge.ims.volte.agents.RegiProcessAgent` (baksmali of the stock Ims4 and
+`boot-telephony-common.oat`) and `llvm-objdump` of the qcril lib.
+
+Route A, every operator (`setImsRegistrationStateForModem(regState)`):
+
+    IIMSPhone.setSysInfo(1, 0xd, regState, "")
+    -> IMSPhone.setBalItem(0xd, regState)
+    -> item 0x60039 LGE_MODEM_INFO_IMS_REG_STATUS (com.lge.internal.telephony.ModemItem$W_BASE)
+    -> Phone.setModemIntegerItem -> RIL.setModemInfo
+    -> RIL_REQUEST_SET_MODEM_INFO 374 (0x176), parcel {int item, String data}
+    -> qcril_qmi_lge_vss_set_modem_info
+    -> qcci_qmi_lge_vss_send_cmd(0x0609, req, 0x410, resp, 8, 500 ms)
+    -> QMI service 0x320 (lge_vss common, IDL libvss_common_idl.so) msg 0x0609
+       req: TLV 0x01 u32 item; TLV 0x02 u32 instance (qmi_ril_get_process_instance_id);
+            TLV 0x10 u8[1024] string, var-len
+       resp: result only (8 bytes)
+
+GET_MODEM_INFO (375) is msg 0x060a on the same service. Other W_BASE items:
+0x60020 DETACH, 0x60021 ATTACH, 0x60022 OPRT_MODE, 0x6002d SKT_VTCALL_STATE,
+0x60032 BOOT_COMPLETED, 0x6003e IMS_RF_QUALITY.
+
+Route B, VZW only (`setRegiStateForVZW(appType=10, .., registered)`):
+
+    IIMSPhone.setSysInfo(0x12, 1, -1, "")
+    -> CommandsInterface.setImsRegistration(1)
+    -> RIL_REQUEST_LG_IMS_REGISTRATION_STATE 280 (0x118), parcel {1, state}
+    -> qcril_lgrilhook_set_lg_ims_reg_state
+    -> qcril_qmi_raw_cmd_local(2, 0x1063, req, resp) -> qcril_qmi_raw_cmd(1, 2, 0x1063, ..)
+    -> qcci_qmi_lge_nv_send_cmd
+    -> QMI service 0x2bd (lge_nv, IDL libvss_nv_idl.so) msg 0x0603 (NV write)
+       req 1032 bytes {u32 item=0x1063; u32 len; u8[1024] data}, state as u8 in a
+       10-byte buffer; resp 16 bytes. raw_cmd: arg1==1 -> msg 0x0602 (read,
+       req u32 item, resp {result, u32, u32, u8[1024]}); arg1==2 -> 0x0603
+       (only for arg0 in {1,3}).
+
+VZW extras from the same agent: `setSysInfo(0x10, 0xc8, -1, str)` ->
+sendEnvelope (SIM toolkit); `setImsStatusToModem(1, provisioned&&enabled, 0,
+slot)` -> RIL 453 (0x1c5) VSS_SET_IMS_STATUS, parcel {4, type, state,
+reason, slot} (qcril handler not located yet); `setRegServiceToModem` ->
+`setSysInfo(0x64, sysMode, service, "")` -> setImsRegistrationForHVoLTE
+(RIL id not located yet).
+
+`IMSPhone.setSysInfo(type, ..)` dispatch: 0x1 setBalItem, 0x5 detachLte,
+0xb setDan, 0xd setEmergency, 0x10 sendEnvelope, 0x12 setImsRegistration,
+0x1b setSimTuneAway, 0x1d exitVolteE911EmergencyMode, 0x1f sendIMSCallState,
+0x64 setImsRegistrationForHVoLTE, 0x66 setVoiceDomainPref, 0x67 setVoLteCall;
+also 0xa 0xc 0xe 0x11 0x13 0x14 0x16 0x17 0x18 0x1a 0x20 0x21 0x23. Type 0x51
+(sent by `setImsServiceRegState`) is not handled -- dead call.
+
+Other LG IMS-related RIL requests (ids from the stock `RIL.smali`): 233
+GET_EHRPD_INFO_FOR_IMS, 256 VSS_SET_UE_MODE, 277/278/279 VOLTE_E911
+scan/network-type/exit, 283 SEND_E911_CALL_STATE, 292 UPDATE_IMS_STATUS_REQ,
+295 HVOLTE_SET_VOLTE_CALL_STATUS, 340 VSS_LGEIMS_LTE_DETACH, 341
+LTE_INFO_FOR_IMS, 346 SET_SRVCC_CALL_CONFIG, 347 IMS_CALL_STATE_NOTI_REQ, 350
+SET_IMS_STATUS_FOR_DAN, 454 VSS_VOLTE_CALL_FLUSH, 462
+IWLAN_SEND_IMS_PDN_STATUS.
+
+Ims4 also reports state AP-side only: `TelephonyManager.setImsRegistrationState`,
+`ITelephonyRegistry.notifyVoLteServiceStateChanged`, and
+`com.android.lge.lgsvcitems.LgSvcCmd` (property-style get/set, not a modem
+path).
+
+Implication for a bridge: both modem hooks are plain QMI writes to LG vendor
+services that are live on the modem (0x320 msg 0x0609 item 0x60039; 0x2bd
+NV 0x1063) -- reachable from a QMI client without LG's RIL or qcril, same as
+0x2bf. What the modem does with them (domain selection / SRVCC gating is
+the guess) is untested.
 
 ## Binder surface of `Ims4` vs the Robin bridge
 
@@ -135,12 +207,14 @@ baksmali of the stock `boot-framework.oat`):
    Robin needed (nanopb 0.2.8, Surface sizeof) and unknown new ones.
    `com.qualcomm.qcrilhook`, `com.android.lge.lgsvcitems`, GBAService
    must exist or be stubbed.
-3. Modem hook -- half open. QMI 0x2bf is reachable without LG's RIL and is
-   only the media/socket-bridge pipe (above); the `oem_rapi` path is not
-   reachable. Whether registration works with only 0x2bf served is
-   untested, and the path that reports SIP registration to the modem is
-   not yet identified.
+3. Modem hook -- mapped, untested. QMI 0x2bf (media/socket bridge), 0x320
+   msg 0x0609 item 0x60039 and 0x2bd NV 0x1063 (registration state) are all
+   reachable without LG's RIL; the `oem_rapi` path is not. Whether SIP
+   registration works with only these served, and what the modem does with
+   the registration writes, is untested. Open: qcril handler for RIL 453,
+   RIL id for setImsRegistrationForHVoLTE.
 
 Working files (not in the repo): `.scratch/ims4/` (dexes, smali, QMI
 dumps, stock libs, `qmi/imsmmpf.dis` full disassembly + `qmi/plt.txt`
-PLT-to-symbol map), `.scratch/kdz/vs995/parts/system.image`.
+PLT-to-symbol map, `qmi/{set_modem_info,set_lg_ims_reg_state,raw_cmd}.dis`,
+`smali-telcommon/`), `.scratch/kdz/vs995/parts/system.image`.
