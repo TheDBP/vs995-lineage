@@ -1,0 +1,168 @@
+From 5899209dbe6b9420624b0b1ac11d0569ff7ef015 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 08:36:51 -0400
+Subject: [PATCH] msm8996-common: Flash A runtime fixes -- privapp allowlist,
+ com.lge.os.Build stub, getSlotId redirect, permissive radio (bringup)
+
+Change-Id: I9d336887de48818c2ca755af39e98464a6625670
+---
+ ims/build-ims4.sh                             | 10 +++++
+ .../com/lge/os/Build$CA_TARGET.smali          | 20 ++++++++++
+ ims/extra-smali/com/lge/os/Build.smali        |  8 ++++
+ ims/ims.mk                                    |  5 +++
+ ims/method-redirects.txt                      |  2 +
+ ims/privapp-permissions-com.lge.ims.xml       | 37 +++++++++++++++++++
+ sepolicy/private/ims.te                       |  5 +++
+ 7 files changed, 87 insertions(+)
+ create mode 100644 ims/extra-smali/com/lge/os/Build$CA_TARGET.smali
+ create mode 100644 ims/extra-smali/com/lge/os/Build.smali
+ create mode 100644 ims/method-redirects.txt
+ create mode 100644 ims/privapp-permissions-com.lge.ims.xml
+ create mode 100644 sepolicy/private/ims.te
+
+diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
+index e8edd04c..19c1fa69 100755
+--- a/ims/build-ims4.sh
++++ b/ims/build-ims4.sh
+@@ -72,6 +72,15 @@ for dp,_,fns in os.walk(b):
+ echo ">> 4. rename com.android.ims -> com.lge.imslegacy in Ims4 + merge the legacy closure"
+ python3 "$FORGE/tools/merge-legacy-classes.py" --app "$T/smali-ims4" --legacy "$T/legacy-final" --old com/android/ims --new com/lge/imslegacy --out "$T/merged"
+ 
++echo ">> 4.5 apply framework-API-drift method redirects"
++if [ -f "$HERE/method-redirects.txt" ]; then
++  while IFS='|' read -r old new; do
++    case "$old" in \#*|"") continue;; esac
++    grep -rl -- "$old" "$T/merged" 2>/dev/null | while read -r f; do sed -i "s#${old//\#/\\#}#${new//\#/\\#}#g" "$f"; done
++  done < "$HERE/method-redirects.txt"
++  echo "   redirects applied"
++fi
++
+ echo ">> 5. bundle the 32-bit LG libs into the apk (patchelf-fixed) -- forces 32-bit + app-namespace load"
+ PE=""; for p in patchelf-0_18 patchelf-0_17_2 patchelf; do c="$S/prebuilts/extract-tools/linux-x86/bin/$p"; [ -x "$c" ] && PE="$c" && break; done
+ [ -x "$PE" ] || { echo "!! patchelf not found" >&2; exit 1; }
+@@ -89,6 +98,7 @@ done
+ echo "   bundled $(ls "$T/lib/armeabi-v7a" | wc -l) libs, DT_NEEDED fixed"
+ 
+ echo ">> 6. assemble + repackage unsigned (dex + bundled libs)"
++[ -d "$HERE/extra-smali" ] && cp -r "$HERE/extra-smali/." "$T/merged/" && echo "   merged $(find "$HERE/extra-smali" -name "*.smali" | wc -l) extra LG-framework stub classes"
+ java -jar "$SM" assemble "$T/merged" -o "$T/classes.dex"
+ cp "$APK" "$OUT"
+ (cd "$T" && zip -q "$OUT" classes.dex && zip -q -r "$OUT" lib)
+diff --git a/ims/extra-smali/com/lge/os/Build$CA_TARGET.smali b/ims/extra-smali/com/lge/os/Build$CA_TARGET.smali
+new file mode 100644
+index 00000000..72f7e9ad
+--- /dev/null
++++ b/ims/extra-smali/com/lge/os/Build$CA_TARGET.smali
+@@ -0,0 +1,20 @@
++.class public Lcom/lge/os/Build$CA_TARGET;
++.super Ljava/lang/Object;
++.source "Build.java"
++# LG framework stub (com.lge.os.Build.CA_TARGET) -- carrier/region target the stock boot classpath
++# provided. Values for vs995 = Verizon V20. OperatorInfo reads only OPERATOR + COUNTRY.
++.field public static OPERATOR:Ljava/lang/String;
++.field public static COUNTRY:Ljava/lang/String;
++.method static constructor <clinit>()V
++    .registers 1
++    const-string v0, "VZW"
++    sput-object v0, Lcom/lge/os/Build$CA_TARGET;->OPERATOR:Ljava/lang/String;
++    const-string v0, "US"
++    sput-object v0, Lcom/lge/os/Build$CA_TARGET;->COUNTRY:Ljava/lang/String;
++    return-void
++.end method
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
+diff --git a/ims/extra-smali/com/lge/os/Build.smali b/ims/extra-smali/com/lge/os/Build.smali
+new file mode 100644
+index 00000000..29abab2e
+--- /dev/null
++++ b/ims/extra-smali/com/lge/os/Build.smali
+@@ -0,0 +1,8 @@
++.class public Lcom/lge/os/Build;
++.super Ljava/lang/Object;
++.source "Build.java"
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
+diff --git a/ims/ims.mk b/ims/ims.mk
+index 816b23b2..095487b4 100644
+--- a/ims/ims.mk
++++ b/ims/ims.mk
+@@ -8,3 +8,8 @@
+ PRODUCT_PACKAGES += \
+     libimscompat \
+     Ims4
++
++# Ims4 is a priv-app requesting signature|privileged perms; without this allowlist system_server
++# FATALs at onSystemReady (a framework check, not SELinux). Generated from aapt dump permissions.
++PRODUCT_COPY_FILES += \
++    $(LOCAL_PATH)/ims/privapp-permissions-com.lge.ims.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/permissions/privapp-permissions-com.lge.ims.xml
+diff --git a/ims/method-redirects.txt b/ims/method-redirects.txt
+new file mode 100644
+index 00000000..0fdb10d3
+--- /dev/null
++++ b/ims/method-redirects.txt
+@@ -0,0 +1,2 @@
++# Framework API drift: methods LG's 2016 Ims4 calls that were renamed on A17. old|new (same signature).
++Landroid/telephony/SubscriptionManager;->getSlotId(I)I|Landroid/telephony/SubscriptionManager;->getSlotIndex(I)I
+diff --git a/ims/privapp-permissions-com.lge.ims.xml b/ims/privapp-permissions-com.lge.ims.xml
+new file mode 100644
+index 00000000..85d44206
+--- /dev/null
++++ b/ims/privapp-permissions-com.lge.ims.xml
+@@ -0,0 +1,37 @@
++<?xml version="1.0" encoding="utf-8"?>
++<permissions>
++    <privapp-permissions package="com.lge.ims">
++        <permission name="android.permission.ACCESS_COARSE_LOCATION"/>
++        <permission name="android.permission.ACCESS_FINE_LOCATION"/>
++        <permission name="android.permission.ACCESS_LOCATION_EXTRA_COMMANDS"/>
++        <permission name="android.permission.ACCESS_NETWORK_STATE"/>
++        <permission name="android.permission.ACCESS_SURFACE_FLINGER"/>
++        <permission name="android.permission.ACCESS_WIFI_STATE"/>
++        <permission name="android.permission.CALL_PHONE"/>
++        <permission name="android.permission.CAMERA"/>
++        <permission name="android.permission.CHANGE_COMPONENT_ENABLED_STATE"/>
++        <permission name="android.permission.CHANGE_NETWORK_STATE"/>
++        <permission name="android.permission.CONNECTIVITY_INTERNAL"/>
++        <permission name="android.permission.GET_APP_OPS_STATS"/>
++        <permission name="android.permission.INTERACT_ACROSS_USERS"/>
++        <permission name="android.permission.INTERACT_ACROSS_USERS_FULL"/>
++        <permission name="android.permission.INTERNET"/>
++        <permission name="android.permission.MANAGE_USERS"/>
++        <permission name="android.permission.MODIFY_AUDIO_SETTINGS"/>
++        <permission name="android.permission.READ_CONTACTS"/>
++        <permission name="android.permission.READ_PHONE_STATE"/>
++        <permission name="android.permission.READ_PRECISE_PHONE_STATE"/>
++        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
++        <permission name="android.permission.READ_PROFILE"/>
++        <permission name="android.permission.READ_SMS"/>
++        <permission name="android.permission.RECEIVE_BOOT_COMPLETED"/>
++        <permission name="android.permission.RECEIVE_SMS"/>
++        <permission name="android.permission.RECEIVE_WAP_PUSH"/>
++        <permission name="android.permission.SYSTEM_ALERT_WINDOW"/>
++        <permission name="android.permission.WAKE_LOCK"/>
++        <permission name="android.permission.WRITE_CONTACTS"/>
++        <permission name="android.permission.WRITE_EXTERNAL_STORAGE"/>
++        <permission name="android.permission.WRITE_PROFILE"/>
++        <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
++    </privapp-permissions>
++</permissions>
+diff --git a/sepolicy/private/ims.te b/sepolicy/private/ims.te
+new file mode 100644
+index 00000000..02455570
+--- /dev/null
++++ b/sepolicy/private/ims.te
+@@ -0,0 +1,5 @@
++# LG IMS (VoLTE) bringup -- com.lge.ims runs in the radio domain (android.uid.phone). The 2016 stack
++# sets net.ims.* properties, opens QMI sockets, reads config files. BRINGUP: make radio permissive to
++# surface every denial in one pass (userdebug only); replace with the audit2allow'd rules + remove this
++# before shipping. See IMS.md / rom-forge debugging-volte.md "Get the reworked OEM app to RUN".
++permissive radio;
+-- 
+2.53.0
+
