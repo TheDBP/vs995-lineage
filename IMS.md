@@ -432,7 +432,7 @@ split code into framework jars):
 4. **Rebuild Ims4**: deodex, rename `com.android.ims.*` refs to match item 3,
    keep `com.lge.ims.*` and the broadcast action strings, re-sign with the
    platform key (sharedUserId `android.uid.phone` must match the framework
-   signer -- key at `/media/Storage/Coding/keys/rom`). Install as priv-app.
+   signer -- the ROM signing keys dir). Install as priv-app.
 5. **ImsBridge app** (`android_app`, platform cert, privileged,
    sharedUserId android.uid.phone): manifest `<service>` with intent-filter
    `android.telephony.ims.compat.ImsService` + `MMTEL_FEATURE` meta +
