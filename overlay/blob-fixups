@@ -10,17 +10,3 @@ vendor/lge/v20-common/proprietary/vendor/lib/libfilm_emulation.so              r
 vendor/lge/v20-common/proprietary/vendor/bin/fpc_early_loader                  remove-needed libandroid_runtime.so
 vendor/lge/v20-common/proprietary/vendor/lib/libfpfactory.so                   remove-needed libandroid_runtime.so
 vendor/lge/v20-common/proprietary/vendor/lib64/libfpfactory.so                 remove-needed libandroid_runtime.so
-
-# LG IMS (VoLTE) -- make the 2016 SIP stack load on Android 17. libimscompat.so provides the two
-# dropped libutils symbols + load-only video/OMX stubs; the dead video DT_NEEDED are removed (all
-# video, irrelevant to voice -- co-loading the stock video libs fails on libbinder vtable thunks).
-# Validated by dlopen-probe before wiring. See IMS.md "Inert load" / "Build plan".
-vendor/lge/msm8996-common/proprietary/system/lib/libims.so        remove-needed libsurfaceflinger.so
-vendor/lge/msm8996-common/proprietary/system/lib/libims.so        add-needed     libimscompat.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    remove-needed libsurfaceflinger.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    remove-needed libOmxCore.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    remove-needed libOmxVenc.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    remove-needed libOmxVdec.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    remove-needed libstagefrighthw.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    remove-needed libc2dcolorconvert.so
-vendor/lge/msm8996-common/proprietary/system/lib/libimsmmpf.so    add-needed     libimscompat.so

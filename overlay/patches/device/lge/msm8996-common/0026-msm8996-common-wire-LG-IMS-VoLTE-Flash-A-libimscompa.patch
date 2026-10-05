@@ -1,18 +1,17 @@
-From 637ca660dc5b17740d4f906ec4d5109133296ab5 Mon Sep 17 00:00:00 2001
+From 314b1835f130a97f51f7301192bccaf14ce03422 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Sun, 4 Oct 2026 23:37:29 -0400
-Subject: [PATCH] msm8996-common: wire LG IMS (VoLTE) Flash A -- libimscompat,
- Ims4 prebuilt, IMS libs, namespace
+Date: Mon, 5 Oct 2026 03:55:41 -0400
+Subject: [PATCH 26/27] msm8996-common: wire LG IMS (VoLTE) Flash A --
+ libimscompat, Ims4 (apk-bundled 32-bit libs), namespace
 
-Change-Id: Ifaf6848671e78bd224cbed18c926744256572eee
+Change-Id: Ia287fc9d110a235b139fe650bc5e41dddfd01d4c
 ---
  ims/Android.bp                 | 17 +++++++++
- ims/ims.mk                     | 32 ++++++++++++++++
+ ims/ims.mk                     | 10 +++++
  ims/libimscompat/Android.bp    | 11 ++++++
  ims/libimscompat/imscompat.cpp | 68 ++++++++++++++++++++++++++++++++++
  msm8996.mk                     |  3 ++
- proprietary-files.txt          | 20 ++++++++++
- 6 files changed, 151 insertions(+)
+ 5 files changed, 109 insertions(+)
  create mode 100644 ims/Android.bp
  create mode 100644 ims/ims.mk
  create mode 100644 ims/libimscompat/Android.bp
@@ -43,42 +42,20 @@ index 00000000..b5fbbfb0
 +}
 diff --git a/ims/ims.mk b/ims/ims.mk
 new file mode 100644
-index 00000000..5808e7fb
+index 00000000..816b23b2
 --- /dev/null
 +++ b/ims/ims.mk
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,10 @@
 +# LG IMS (voice VoLTE) -- Flash A. See IMS.md "Build plan".
-+# Our modules (built from source):
++# libimscompat: the compat shim (dropped libutils symbols + load-only video/OMX stubs), /system/lib,
++# exposed in public.libraries so the apk-bundled libims resolves it from the shared system namespace.
++# Ims4: the reworked app (ims/build-ims4.sh), which BUNDLES the 32-bit LG SIP + QMI libs under
++# lib/armeabi-v7a/ -- that forces the com.lge.ims process 32-bit on zygote64_32 and loads the libs from
++# the app namespace's own path. No LG libs in /system/lib; only the framework libs they pull (and
++# libimscompat) are public (system/core patch to public.libraries.android.txt).
 +PRODUCT_PACKAGES += \
 +    libimscompat \
 +    Ims4
-+
-+# LG IMS native stack + stock deps (proprietary; declared in proprietary-files.txt "IMS (VoLTE)" ->
-+# extracted to the vendor tree -> generated vendor Android.bp modules). Installed to /system/lib (32-bit).
-+# DT_NEEDED fixed up by overlay/blob-fixups (add libimscompat, drop dead video libs).
-+PRODUCT_PACKAGES += \
-+    libims \
-+    libimsmmpf \
-+    libimswms \
-+    libext2_uuid \
-+    libvss_ims_qcci \
-+    libqmi \
-+    libqmi_cci \
-+    libqmi_common_so \
-+    libqmi_encdec \
-+    libqmi_client_qmux \
-+    libqmiservices \
-+    libidl \
-+    libsmemlog \
-+    libmdmdetect \
-+    libdsutils
-+
-+# Namespace: the com.lge.ims app process must load libims from /system/lib, and libims pulls
-+# libgui/libbinder/libandroid_runtime -- none of which an app classloader namespace can reach by
-+# default. Exposing them in the BASE public.libraries.txt shares the system-namespace instance
-+# (NOT a second copy -- public libs are resolved from the linked system namespace), and lets the
-+# app load the IMS libs by name. Done via a system/core patch to public.libraries.android.txt
-+# (overlay/patches/system/core). This is a broad bringup lever; scope it after voice works.
 diff --git a/ims/libimscompat/Android.bp b/ims/libimscompat/Android.bp
 new file mode 100644
 index 00000000..bb69c48e
@@ -181,34 +158,6 @@ index bed6f3a1..74a10bed 100644
 +
 +# LG IMS (VoLTE) -- Flash A
 +include $(LOCAL_PATH)/ims/ims.mk
-diff --git a/proprietary-files.txt b/proprietary-files.txt
-index 0388cf31..c637d462 100644
---- a/proprietary-files.txt
-+++ b/proprietary-files.txt
-@@ -593,3 +593,23 @@ vendor/etc/init/android.hardware.drm@1.2-service.widevine.rc|dee5b7838ac561a2292
- vendor/etc/vintf/manifest/manifest_android.hardware.drm@1.2-service.widevine.xml|1b556a6b981dfe8c5d62311b59758d370dd6dd10
- vendor/lib64/libwvhidl.so|a701374f4c0a6b6924b3f81c304505db48b3f9e1|d02ab164114f28870bf81f0f57a8ad970c984153
- vendor/lib64/mediadrm/libwvdrmengine.so|fd53782817acdb28b690af2b9cc9870df1e9ba47|5607d483ec695948c7f7f845131c2c0fa1722d64
-+
-+# IMS (VoLTE) -- LG's AP-side SIP stack + the QMI client stack it needs, all placed in /system/lib
-+# (32-bit) so there is no system<->vendor link boundary. The 10 libqmi*/lib{idl,smemlog,mdmdetect,
-+# dsutils} come from the stock vendor partition; stage them under proprietary/system/lib. DT_NEEDED
-+# fixed by overlay/blob-fixups. See device/lge/msm8996-common/ims/ and IMS.md.
-+system/lib/libims.so
-+system/lib/libimsmmpf.so
-+system/lib/libimswms.so
-+system/lib/libext2_uuid.so
-+system/lib/libvss_ims_qcci.so
-+system/lib/libqmi.so
-+system/lib/libqmi_cci.so
-+system/lib/libqmi_common_so.so
-+system/lib/libqmi_encdec.so
-+system/lib/libqmi_client_qmux.so
-+system/lib/libqmiservices.so
-+system/lib/libidl.so
-+system/lib/libsmemlog.so
-+system/lib/libmdmdetect.so
-+system/lib/libdsutils.so
 -- 
 2.53.0
 

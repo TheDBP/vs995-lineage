@@ -1,29 +1,29 @@
-From a41a0ded0510aa6ac19fec874354cb61fb741e2b Mon Sep 17 00:00:00 2001
+From 1151660af102a03798f1aea2572669d910c255a6 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Sun, 4 Oct 2026 23:50:52 -0400
-Subject: [PATCH] msm8996-common: Ims4 rework pipeline (build-ims4.sh via forge
- tools, iface list, parcelable stubs)
+Date: Mon, 5 Oct 2026 03:55:41 -0400
+Subject: [PATCH 27/27] msm8996-common: Ims4 rework pipeline (build-ims4.sh
+ bundles the 32-bit libs, via forge tools)
 
-Change-Id: I14c91663bc37b15ce25404f5ded4050dae3653a6
+Change-Id: I9d9578b0f876b2292b234bf9b615148d970f1d0a
 ---
  ims/.gitignore                                |  3 +
- ims/build-ims4.sh                             | 73 +++++++++++++++++++
- ims/iface-list.txt                            | 17 +++++
- .../com/lge/imslegacy/ImsCallForwardInfo.java | 14 ++++
- .../com/lge/imslegacy/ImsCallProfile.java     | 14 ++++
- .../com/lge/imslegacy/ImsConferenceState.java | 14 ++++
- .../com/lge/imslegacy/ImsReasonInfo.java      | 14 ++++
- .../com/lge/imslegacy/ImsSsInfo.java          | 14 ++++
- .../lge/imslegacy/ImsStreamMediaProfile.java  | 14 ++++
- .../imslegacy/ImsSuppServiceNotification.java | 14 ++++
- .../imslegacy/LGImsCallMediaDebugInfo.java    | 10 +++
- .../com/lge/imslegacy/LGImsDevice.java        | 10 +++
- .../com/lge/imslegacy/LGImsDeviceInfo.java    | 14 ++++
- .../com/lge/imslegacy/LGImsDialog.java        | 20 +++++
- .../com/lge/imslegacy/LGImsDialogState.java   | 14 ++++
- .../com/lge/imslegacy/LGImsECallConfig.java   | 14 ++++
- .../com/lge/imslegacy/LGImsIcbInfo.java       | 10 +++
- 17 files changed, 283 insertions(+)
+ ims/build-ims4.sh                             | 96 +++++++++++++++++++
+ ims/iface-list.txt                            | 17 ++++
+ .../com/lge/imslegacy/ImsCallForwardInfo.java | 14 +++
+ .../com/lge/imslegacy/ImsCallProfile.java     | 14 +++
+ .../com/lge/imslegacy/ImsConferenceState.java | 14 +++
+ .../com/lge/imslegacy/ImsReasonInfo.java      | 14 +++
+ .../com/lge/imslegacy/ImsSsInfo.java          | 14 +++
+ .../lge/imslegacy/ImsStreamMediaProfile.java  | 14 +++
+ .../imslegacy/ImsSuppServiceNotification.java | 14 +++
+ .../imslegacy/LGImsCallMediaDebugInfo.java    | 10 ++
+ .../com/lge/imslegacy/LGImsDevice.java        | 10 ++
+ .../com/lge/imslegacy/LGImsDeviceInfo.java    | 14 +++
+ .../com/lge/imslegacy/LGImsDialog.java        | 20 ++++
+ .../com/lge/imslegacy/LGImsDialogState.java   | 14 +++
+ .../com/lge/imslegacy/LGImsECallConfig.java   | 14 +++
+ .../com/lge/imslegacy/LGImsIcbInfo.java       | 10 ++
+ 17 files changed, 306 insertions(+)
  create mode 100644 ims/.gitignore
  create mode 100755 ims/build-ims4.sh
  create mode 100644 ims/iface-list.txt
@@ -53,33 +53,38 @@ index 00000000..90998d16
 +Ims4-reworked.apk
 diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
 new file mode 100755
-index 00000000..f8f7cc7f
+index 00000000..e8edd04c
 --- /dev/null
 +++ b/ims/build-ims4.sh
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,96 @@
 +#!/usr/bin/env bash
 +# build-ims4.sh -- rework LG's stock Ims4 into a self-contained, platform-signable apk for Android 17.
 +# Renames com.android.ims.* (removed since P, and incompatibly retained on A17) to com.lge.imslegacy.*
 +# and merges that legacy API into Ims4's own dex. See ../../../../IMS.md "Build plan" and
 +# rom-forge/docs/debugging-volte.md "Rework an OEM legacy IMS app".
 +#
-+#   build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp-dir> <framework-smali-dir> <out.apk>
++#   build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp-dir> <framework-smali-dir> \
++#                 <stock-libs-dir> <out.apk>
 +#
 +# Proprietary inputs (NOT committed -- stage them): the stock Ims4.apk, boot-ims-common.oat and a stock
-+# system image (for the deodex boot classpath), and a framework deodex that holds the com.android.ims
-+# AIDL interfaces + parcelables (quickened is fine -- gen-legacy-aidl only reads constants + signatures).
-+# Committed here: iface-list.txt (the interfaces Ims4 needs) and legacy-java/ (build-time parcelable
-+# stubs). Generic steps use the forge tools; set FORGE to the forge dir (default: the repo's forge/).
++# system image (for the deodex boot classpath), a framework deodex that holds the com.android.ims AIDL
++# interfaces + parcelables (quickened is fine), and <stock-libs-dir> holding the 32-bit LG SIP libs +
++# QMI deps (the 15 in LG_LIBS below). Committed here: iface-list.txt and legacy-java/ (parcelable stubs).
++# Generic steps use the forge tools; set FORGE to the forge dir.
++#
++# The 15 LG libs are bundled INTO the apk under lib/armeabi-v7a/ (patchelf-fixed: libims/libimsmmpf get
++# add-needed libimscompat + the dead video DT_NEEDED removed). Bundling forces the com.lge.ims process
++# 32-bit on zygote64_32 AND puts the libs in the app namespace's own permitted path, so only the
++# framework libs (+ libimscompat) need public.libraries. libimscompat itself is a Soong cc_library in
++# /system/lib (public) -- the bundled libims resolves it from the shared system namespace.
 +#
 +# OUTPUT is UNSIGNED, no META-INF -> ship via android_app_import certificate:platform (Ims4 is
 +# sharedUserId android.uid.phone, must be signed by the platform key).
-+#
-+# TODO (bitness): the 32-bit LG SIP libs must be bundled in this apk under lib/armeabi-v7a/ (fixed up
-+# by blob-fixups) so the com.lge.ims process launches 32-bit on zygote64_32 -- see IMS.md. Not yet done
-+# here; currently the libs install to /system/lib + public.libraries, which forces nothing.
 +set -euo pipefail
-+APK="${1:?usage: build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp> <framework-smali> <out.apk>}"
-+IMSCOMMON="${2:?boot-ims-common.oat}"; BOOTCP="${3:?system.image or bootcp dir}"; FWSMALI="${4:?framework smali dir}"; OUT="${5:?out.apk}"
++APK="${1:?usage: build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp> <framework-smali> <stock-libs-dir> <out.apk>}"
++IMSCOMMON="${2:?boot-ims-common.oat}"; BOOTCP="${3:?system.image or bootcp dir}"; FWSMALI="${4:?framework smali dir}"
++STOCKLIBS="${5:?stock-libs-dir (32-bit LG SIP + QMI libs)}"; OUT="${6:?out.apk}"
++LG_LIBS="libims libimsmmpf libimswms libext2_uuid libvss_ims_qcci libqmi libqmi_cci libqmi_common_so libqmi_encdec libqmi_client_qmux libqmiservices libidl libsmemlog libmdmdetect libdsutils"
 +HERE="$(cd "$(dirname "$0")" && pwd)"
 +FORGE="${FORGE:-$HERE/../../../../../forge}"; [ -d "$FORGE/tools" ] || FORGE="${FORGE_DIR:?set FORGE to the forge dir}"
 +T="$HERE/.work"; rm -rf "$T"; mkdir -p "$T"
@@ -126,10 +131,28 @@ index 00000000..f8f7cc7f
 +echo ">> 4. rename com.android.ims -> com.lge.imslegacy in Ims4 + merge the legacy closure"
 +python3 "$FORGE/tools/merge-legacy-classes.py" --app "$T/smali-ims4" --legacy "$T/legacy-final" --old com/android/ims --new com/lge/imslegacy --out "$T/merged"
 +
-+echo ">> 5. assemble + repackage unsigned"
++echo ">> 5. bundle the 32-bit LG libs into the apk (patchelf-fixed) -- forces 32-bit + app-namespace load"
++PE=""; for p in patchelf-0_18 patchelf-0_17_2 patchelf; do c="$S/prebuilts/extract-tools/linux-x86/bin/$p"; [ -x "$c" ] && PE="$c" && break; done
++[ -x "$PE" ] || { echo "!! patchelf not found" >&2; exit 1; }
++mkdir -p "$T/lib/armeabi-v7a"
++for l in $LG_LIBS; do
++  src="$STOCKLIBS/$l.so"; [ -f "$src" ] || { echo "!! missing stock lib: $src" >&2; exit 1; }
++  cp "$src" "$T/lib/armeabi-v7a/$l.so"
++done
++# DT_NEEDED fixups (the blob-fixups rules, applied to the bundled copies)
++"$PE" --remove-needed libsurfaceflinger.so --add-needed libimscompat.so "$T/lib/armeabi-v7a/libims.so"
++for d in libsurfaceflinger.so libOmxCore.so libOmxVenc.so libOmxVdec.so libstagefrighthw.so libc2dcolorconvert.so; do
++  "$PE" --remove-needed "$d" "$T/lib/armeabi-v7a/libimsmmpf.so" 2>/dev/null || true
++done
++"$PE" --add-needed libimscompat.so "$T/lib/armeabi-v7a/libimsmmpf.so"
++echo "   bundled $(ls "$T/lib/armeabi-v7a" | wc -l) libs, DT_NEEDED fixed"
++
++echo ">> 6. assemble + repackage unsigned (dex + bundled libs)"
 +java -jar "$SM" assemble "$T/merged" -o "$T/classes.dex"
-+cp "$APK" "$OUT"; (cd "$T" && zip -q "$OUT" classes.dex); zip -q -d "$OUT" 'META-INF/*' >/dev/null 2>&1 || true
-+echo ">> built $OUT ($(stat -c %s "$OUT") bytes) -- unsigned, for android_app_import certificate:platform"
++cp "$APK" "$OUT"
++(cd "$T" && zip -q "$OUT" classes.dex && zip -q -r "$OUT" lib)
++zip -q -d "$OUT" 'META-INF/*' >/dev/null 2>&1 || true
++echo ">> built $OUT ($(stat -c %s "$OUT") bytes, $(unzip -l "$OUT" | grep -c 'lib/armeabi-v7a/.*\.so') libs bundled) -- unsigned, for android_app_import certificate:platform"
 diff --git a/ims/iface-list.txt b/ims/iface-list.txt
 new file mode 100644
 index 00000000..269c6d45

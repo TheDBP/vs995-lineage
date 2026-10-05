@@ -1,0 +1,37 @@
+From 62b2571e91931a0bcd24b548eedc79723af4c733 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 03:55:53 -0400
+Subject: [PATCH] rootdir: expose the framework libs LG's IMS stack pulls +
+ libimscompat in public.libraries (VoLTE bringup)
+
+Change-Id: Id8dc83a0d15fd655ff317e5b96a188760770f766
+---
+ rootdir/etc/public.libraries.android.txt | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/rootdir/etc/public.libraries.android.txt b/rootdir/etc/public.libraries.android.txt
+index 9be2ef69d..330d6b886 100644
+--- a/rootdir/etc/public.libraries.android.txt
++++ b/rootdir/etc/public.libraries.android.txt
+@@ -29,3 +29,18 @@ libsync.so
+ libvulkan.so
+ libwebviewchromium_plat_support.so
+ libz.so
++# LG IMS (VoLTE) bringup -- expose the framework libs the 2016 IMS stack pulls (shared from the
++# system namespace; NOT a second copy -- public libs resolve from the linked system namespace), plus
++# libimscompat. The LG SIP libs themselves are bundled in Ims4.apk (32-bit, lib/armeabi-v7a/), not here.
++# See device/lge/msm8996-common/ims/ and IMS.md. Broad lever; scope after voice works.
++libbinder.so
++libutils.so
++libcutils.so
++libandroid_runtime.so
++libgui.so
++libui.so
++libmedia.so
++libcamera_client.so
++libsqlite.so
++libnetd_client.so
++libimscompat.so 32
+-- 
+2.53.0
+
