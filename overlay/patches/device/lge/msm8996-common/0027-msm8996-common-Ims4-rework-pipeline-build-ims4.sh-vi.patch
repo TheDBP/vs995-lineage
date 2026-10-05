@@ -1,0 +1,433 @@
+From a41a0ded0510aa6ac19fec874354cb61fb741e2b Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 23:50:52 -0400
+Subject: [PATCH] msm8996-common: Ims4 rework pipeline (build-ims4.sh via forge
+ tools, iface list, parcelable stubs)
+
+Change-Id: I14c91663bc37b15ce25404f5ded4050dae3653a6
+---
+ ims/.gitignore                                |  3 +
+ ims/build-ims4.sh                             | 73 +++++++++++++++++++
+ ims/iface-list.txt                            | 17 +++++
+ .../com/lge/imslegacy/ImsCallForwardInfo.java | 14 ++++
+ .../com/lge/imslegacy/ImsCallProfile.java     | 14 ++++
+ .../com/lge/imslegacy/ImsConferenceState.java | 14 ++++
+ .../com/lge/imslegacy/ImsReasonInfo.java      | 14 ++++
+ .../com/lge/imslegacy/ImsSsInfo.java          | 14 ++++
+ .../lge/imslegacy/ImsStreamMediaProfile.java  | 14 ++++
+ .../imslegacy/ImsSuppServiceNotification.java | 14 ++++
+ .../imslegacy/LGImsCallMediaDebugInfo.java    | 10 +++
+ .../com/lge/imslegacy/LGImsDevice.java        | 10 +++
+ .../com/lge/imslegacy/LGImsDeviceInfo.java    | 14 ++++
+ .../com/lge/imslegacy/LGImsDialog.java        | 20 +++++
+ .../com/lge/imslegacy/LGImsDialogState.java   | 14 ++++
+ .../com/lge/imslegacy/LGImsECallConfig.java   | 14 ++++
+ .../com/lge/imslegacy/LGImsIcbInfo.java       | 10 +++
+ 17 files changed, 283 insertions(+)
+ create mode 100644 ims/.gitignore
+ create mode 100755 ims/build-ims4.sh
+ create mode 100644 ims/iface-list.txt
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsCallForwardInfo.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsCallProfile.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsConferenceState.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsReasonInfo.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsSsInfo.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsStreamMediaProfile.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/ImsSuppServiceNotification.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsCallMediaDebugInfo.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsDevice.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsDeviceInfo.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsDialog.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsDialogState.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsECallConfig.java
+ create mode 100644 ims/legacy-java/com/lge/imslegacy/LGImsIcbInfo.java
+
+diff --git a/ims/.gitignore b/ims/.gitignore
+new file mode 100644
+index 00000000..90998d16
+--- /dev/null
++++ b/ims/.gitignore
+@@ -0,0 +1,3 @@
++# Proprietary-derived + intermediates -- produced by build-ims4.sh, never committed.
++.work/
++Ims4-reworked.apk
+diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
+new file mode 100755
+index 00000000..f8f7cc7f
+--- /dev/null
++++ b/ims/build-ims4.sh
+@@ -0,0 +1,73 @@
++#!/usr/bin/env bash
++# build-ims4.sh -- rework LG's stock Ims4 into a self-contained, platform-signable apk for Android 17.
++# Renames com.android.ims.* (removed since P, and incompatibly retained on A17) to com.lge.imslegacy.*
++# and merges that legacy API into Ims4's own dex. See ../../../../IMS.md "Build plan" and
++# rom-forge/docs/debugging-volte.md "Rework an OEM legacy IMS app".
++#
++#   build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp-dir> <framework-smali-dir> <out.apk>
++#
++# Proprietary inputs (NOT committed -- stage them): the stock Ims4.apk, boot-ims-common.oat and a stock
++# system image (for the deodex boot classpath), and a framework deodex that holds the com.android.ims
++# AIDL interfaces + parcelables (quickened is fine -- gen-legacy-aidl only reads constants + signatures).
++# Committed here: iface-list.txt (the interfaces Ims4 needs) and legacy-java/ (build-time parcelable
++# stubs). Generic steps use the forge tools; set FORGE to the forge dir (default: the repo's forge/).
++#
++# OUTPUT is UNSIGNED, no META-INF -> ship via android_app_import certificate:platform (Ims4 is
++# sharedUserId android.uid.phone, must be signed by the platform key).
++#
++# TODO (bitness): the 32-bit LG SIP libs must be bundled in this apk under lib/armeabi-v7a/ (fixed up
++# by blob-fixups) so the com.lge.ims process launches 32-bit on zygote64_32 -- see IMS.md. Not yet done
++# here; currently the libs install to /system/lib + public.libraries, which forces nothing.
++set -euo pipefail
++APK="${1:?usage: build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp> <framework-smali> <out.apk>}"
++IMSCOMMON="${2:?boot-ims-common.oat}"; BOOTCP="${3:?system.image or bootcp dir}"; FWSMALI="${4:?framework smali dir}"; OUT="${5:?out.apk}"
++HERE="$(cd "$(dirname "$0")" && pwd)"
++FORGE="${FORGE:-$HERE/../../../../../forge}"; [ -d "$FORGE/tools" ] || FORGE="${FORGE_DIR:?set FORGE to the forge dir}"
++T="$HERE/.work"; rm -rf "$T"; mkdir -p "$T"
++S="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)/build_output}/src"
++AIDL="$S/prebuilts/build-tools/linux-x86/bin/aidl"
++JAVAC="$(for v in jdk21 jdk17 jdk11; do c="$S/prebuilts/jdk/$v/linux-x86/bin/javac"; [ -x "$c" ] && echo "$c" && break; done)"
++AJAR="$S/prebuilts/sdk/current/public/android.jar"
++R8="$S/prebuilts/r8/r8.jar"; BK="$S/prebuilts/extract-tools/common/smali/baksmali.jar"; SM="$S/prebuilts/extract-tools/common/smali/smali.jar"
++
++echo ">> 1. deodex Ims4.apk + boot-ims-common"
++"$FORGE/tools/oat-to-smali.sh" "$APK" "$T/smali-ims4" >/dev/null
++BUILD_ROOT="${BUILD_ROOT:-$(cd "$HERE/../../../../.." && pwd)/build_output}" "$FORGE/tools/deodex-jar.sh" "$IMSCOMMON" "$BOOTCP" "$T/smali-imscommon" >/dev/null
++
++echo ">> 2. regenerate the legacy AIDL interfaces -> clean smali"
++IFACES="$(tr '\n' ' ' < "$HERE/iface-list.txt") IImsExternalCallStateListener IImsVideoCallCallback"
++mkdir -p "$T/aidlgen/legacy"; ln -sf "$FWSMALI" "$T/aidlgen/legacy/framework2"
++LEGACY_PKG=com.lge.imslegacy python3 "$FORGE/tools/gen-legacy-aidl.py" "$T/aidlgen" "$T/aidl" $IFACES
++# parcelable .aidl decls + build-time stub java (one per legacy-java/ class)
++mkdir -p "$T/aidlroot/com/lge/imslegacy/internal"
++cp "$T"/aidl/*.aidl "$T/aidlroot/com/lge/imslegacy/" 2>/dev/null || true
++cp "$T"/aidl/internal/*.aidl "$T/aidlroot/com/lge/imslegacy/internal/" 2>/dev/null || true
++for j in "$HERE"/legacy-java/com/lge/imslegacy/*.java; do c=$(basename "$j" .java); printf 'package com.lge.imslegacy;\nparcelable %s;\n' "$c" > "$T/aidlroot/com/lge/imslegacy/$c.aidl"; done
++INCL="-I$T/aidlroot -I$S/frameworks/base/core/java -I$S/frameworks/base/telecomm/java -I$S/frameworks/base/telephony/java -I$S/frameworks/base/telecomm/framework/aidl-export -I$S/frameworks/native/aidl/gui"
++mkdir -p "$T/gen-java"; for a in $(find "$T/aidlroot" -name '*.aidl'); do grep -q '^interface' "$a" && "$AIDL" $INCL -o"$T/gen-java" "$a"; done
++mkdir -p "$T/classes"; find "$T/gen-java" "$HERE/legacy-java" -name '*.java' > "$T/srcs.txt"
++"$JAVAC" --release 17 -cp "$AJAR" -d "$T/classes" @"$T/srcs.txt"
++mkdir -p "$T/dex"; find "$T/classes" -name '*.class' > "$T/cls.txt"
++java -cp "$R8" com.android.tools.r8.D8 --min-api 21 --lib "$AJAR" --output "$T/dex" @"$T/cls.txt"
++java -jar "$BK" d "$T/dex/classes.dex" -o "$T/legacy-smali" >/dev/null
++
++echo ">> 3. unified legacy source (all com.android.ims) = deodexed logic + interfaces/stubs"
++mkdir -p "$T/legacy-final"; cp -r "$T/smali-imscommon/com" "$T/legacy-final/"
++cp -r "$T/legacy-smali" "$T/tmp2"
++find "$T/tmp2" -name '*.smali' -exec sed -i 's#Lcom/lge/imslegacy#Lcom/android/ims#g; s#com\.lge\.imslegacy#com.android.ims#g' {} +
++python3 -c "
++import os,shutil,sys
++b=sys.argv[1]+'/tmp2/com/lge/imslegacy'
++for dp,_,fns in os.walk(b):
++ for fn in fns:
++  if fn.endswith('.smali'):
++   src=os.path.join(dp,fn); rel=os.path.relpath(src,b); dst=os.path.join(sys.argv[1],'legacy-final/com/android/ims',rel)
++   os.makedirs(os.path.dirname(dst),exist_ok=True); shutil.copy(src,dst)" "$T"
++
++echo ">> 4. rename com.android.ims -> com.lge.imslegacy in Ims4 + merge the legacy closure"
++python3 "$FORGE/tools/merge-legacy-classes.py" --app "$T/smali-ims4" --legacy "$T/legacy-final" --old com/android/ims --new com/lge/imslegacy --out "$T/merged"
++
++echo ">> 5. assemble + repackage unsigned"
++java -jar "$SM" assemble "$T/merged" -o "$T/classes.dex"
++cp "$APK" "$OUT"; (cd "$T" && zip -q "$OUT" classes.dex); zip -q -d "$OUT" 'META-INF/*' >/dev/null 2>&1 || true
++echo ">> built $OUT ($(stat -c %s "$OUT") bytes) -- unsigned, for android_app_import certificate:platform"
+diff --git a/ims/iface-list.txt b/ims/iface-list.txt
+new file mode 100644
+index 00000000..269c6d45
+--- /dev/null
++++ b/ims/iface-list.txt
+@@ -0,0 +1,17 @@
++IImsCallSession
++IImsCallSessionEx
++IImsCallSessionListener
++IImsCallSessionListenerEx
++IImsConfig
++IImsEcbm
++IImsEcbmListener
++IImsMultiEndpoint
++IImsRegistrationListener
++IImsRegistrationListenerEx
++IImsService
++IImsServiceEx
++IImsUt
++IImsUtEx
++IImsUtListener
++IImsVideoCallProvider
++ImsConfigListener
+\ No newline at end of file
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsCallForwardInfo.java b/ims/legacy-java/com/lge/imslegacy/ImsCallForwardInfo.java
+new file mode 100644
+index 00000000..0696ae29
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsCallForwardInfo.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsCallForwardInfo implements Parcelable {
++    public ImsCallForwardInfo() {}
++    protected ImsCallForwardInfo(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsCallForwardInfo> CREATOR = new Parcelable.Creator<ImsCallForwardInfo>() {
++        public ImsCallForwardInfo createFromParcel(Parcel in) { return new ImsCallForwardInfo(in); }
++        public ImsCallForwardInfo[] newArray(int size) { return new ImsCallForwardInfo[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsCallProfile.java b/ims/legacy-java/com/lge/imslegacy/ImsCallProfile.java
+new file mode 100644
+index 00000000..9125b135
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsCallProfile.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsCallProfile implements Parcelable {
++    public ImsCallProfile() {}
++    protected ImsCallProfile(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsCallProfile> CREATOR = new Parcelable.Creator<ImsCallProfile>() {
++        public ImsCallProfile createFromParcel(Parcel in) { return new ImsCallProfile(in); }
++        public ImsCallProfile[] newArray(int size) { return new ImsCallProfile[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsConferenceState.java b/ims/legacy-java/com/lge/imslegacy/ImsConferenceState.java
+new file mode 100644
+index 00000000..50ade093
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsConferenceState.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsConferenceState implements Parcelable {
++    public ImsConferenceState() {}
++    protected ImsConferenceState(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsConferenceState> CREATOR = new Parcelable.Creator<ImsConferenceState>() {
++        public ImsConferenceState createFromParcel(Parcel in) { return new ImsConferenceState(in); }
++        public ImsConferenceState[] newArray(int size) { return new ImsConferenceState[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsReasonInfo.java b/ims/legacy-java/com/lge/imslegacy/ImsReasonInfo.java
+new file mode 100644
+index 00000000..ed15a0de
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsReasonInfo.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsReasonInfo implements Parcelable {
++    public ImsReasonInfo() {}
++    protected ImsReasonInfo(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsReasonInfo> CREATOR = new Parcelable.Creator<ImsReasonInfo>() {
++        public ImsReasonInfo createFromParcel(Parcel in) { return new ImsReasonInfo(in); }
++        public ImsReasonInfo[] newArray(int size) { return new ImsReasonInfo[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsSsInfo.java b/ims/legacy-java/com/lge/imslegacy/ImsSsInfo.java
+new file mode 100644
+index 00000000..4683ef60
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsSsInfo.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsSsInfo implements Parcelable {
++    public ImsSsInfo() {}
++    protected ImsSsInfo(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsSsInfo> CREATOR = new Parcelable.Creator<ImsSsInfo>() {
++        public ImsSsInfo createFromParcel(Parcel in) { return new ImsSsInfo(in); }
++        public ImsSsInfo[] newArray(int size) { return new ImsSsInfo[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsStreamMediaProfile.java b/ims/legacy-java/com/lge/imslegacy/ImsStreamMediaProfile.java
+new file mode 100644
+index 00000000..d5fdd442
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsStreamMediaProfile.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsStreamMediaProfile implements Parcelable {
++    public ImsStreamMediaProfile() {}
++    protected ImsStreamMediaProfile(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsStreamMediaProfile> CREATOR = new Parcelable.Creator<ImsStreamMediaProfile>() {
++        public ImsStreamMediaProfile createFromParcel(Parcel in) { return new ImsStreamMediaProfile(in); }
++        public ImsStreamMediaProfile[] newArray(int size) { return new ImsStreamMediaProfile[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/ImsSuppServiceNotification.java b/ims/legacy-java/com/lge/imslegacy/ImsSuppServiceNotification.java
+new file mode 100644
+index 00000000..9fa7b209
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/ImsSuppServiceNotification.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class ImsSuppServiceNotification implements Parcelable {
++    public ImsSuppServiceNotification() {}
++    protected ImsSuppServiceNotification(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<ImsSuppServiceNotification> CREATOR = new Parcelable.Creator<ImsSuppServiceNotification>() {
++        public ImsSuppServiceNotification createFromParcel(Parcel in) { return new ImsSuppServiceNotification(in); }
++        public ImsSuppServiceNotification[] newArray(int size) { return new ImsSuppServiceNotification[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsCallMediaDebugInfo.java b/ims/legacy-java/com/lge/imslegacy/LGImsCallMediaDebugInfo.java
+new file mode 100644
+index 00000000..7027291c
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsCallMediaDebugInfo.java
+@@ -0,0 +1,10 @@
++package com.lge.imslegacy;
++import android.os.Parcel; import android.os.Parcelable;
++public class LGImsCallMediaDebugInfo implements Parcelable {
++    public LGImsCallMediaDebugInfo() {} protected LGImsCallMediaDebugInfo(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsCallMediaDebugInfo> CREATOR = new Parcelable.Creator<LGImsCallMediaDebugInfo>() {
++        public LGImsCallMediaDebugInfo createFromParcel(Parcel in) { return new LGImsCallMediaDebugInfo(in); }
++        public LGImsCallMediaDebugInfo[] newArray(int size) { return new LGImsCallMediaDebugInfo[size]; } };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsDevice.java b/ims/legacy-java/com/lge/imslegacy/LGImsDevice.java
+new file mode 100644
+index 00000000..bb07c469
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsDevice.java
+@@ -0,0 +1,10 @@
++package com.lge.imslegacy;
++import android.os.Parcel; import android.os.Parcelable;
++public class LGImsDevice implements Parcelable {
++    public LGImsDevice() {} protected LGImsDevice(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsDevice> CREATOR = new Parcelable.Creator<LGImsDevice>() {
++        public LGImsDevice createFromParcel(Parcel in) { return new LGImsDevice(in); }
++        public LGImsDevice[] newArray(int size) { return new LGImsDevice[size]; } };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsDeviceInfo.java b/ims/legacy-java/com/lge/imslegacy/LGImsDeviceInfo.java
+new file mode 100644
+index 00000000..6b2b3fb7
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsDeviceInfo.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class LGImsDeviceInfo implements Parcelable {
++    public LGImsDeviceInfo() {}
++    protected LGImsDeviceInfo(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsDeviceInfo> CREATOR = new Parcelable.Creator<LGImsDeviceInfo>() {
++        public LGImsDeviceInfo createFromParcel(Parcel in) { return new LGImsDeviceInfo(in); }
++        public LGImsDeviceInfo[] newArray(int size) { return new LGImsDeviceInfo[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsDialog.java b/ims/legacy-java/com/lge/imslegacy/LGImsDialog.java
+new file mode 100644
+index 00000000..9e20cff9
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsDialog.java
+@@ -0,0 +1,20 @@
++package com.lge.imslegacy;
++import android.os.Parcel; import android.os.Parcelable;
++public class LGImsDialog implements Parcelable {
++    public LGImsDialog() {} protected LGImsDialog(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsDialog> CREATOR = new Parcelable.Creator<LGImsDialog>() {
++        public LGImsDialog createFromParcel(Parcel in) { return new LGImsDialog(in); }
++        public LGImsDialog[] newArray(int size) { return new LGImsDialog[size]; } };
++    public static class Participant implements Parcelable {
++        public Participant() {} protected Participant(Parcel in) {}
++        public int describeContents() { return 0; }
++        public void writeToParcel(Parcel dest, int flags) {}
++        public static final Parcelable.Creator<Participant> CREATOR = new Parcelable.Creator<Participant>() {
++            public Participant createFromParcel(Parcel in) { return new Participant(in); }
++            public Participant[] newArray(int size) { return new Participant[size]; } }; }
++    public static class State {
++        public static final State IDLE = new State();
++        public State() {} }
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsDialogState.java b/ims/legacy-java/com/lge/imslegacy/LGImsDialogState.java
+new file mode 100644
+index 00000000..b2424c8e
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsDialogState.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class LGImsDialogState implements Parcelable {
++    public LGImsDialogState() {}
++    protected LGImsDialogState(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsDialogState> CREATOR = new Parcelable.Creator<LGImsDialogState>() {
++        public LGImsDialogState createFromParcel(Parcel in) { return new LGImsDialogState(in); }
++        public LGImsDialogState[] newArray(int size) { return new LGImsDialogState[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsECallConfig.java b/ims/legacy-java/com/lge/imslegacy/LGImsECallConfig.java
+new file mode 100644
+index 00000000..9ba8c605
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsECallConfig.java
+@@ -0,0 +1,14 @@
++package com.lge.imslegacy;
++import android.os.Parcel;
++import android.os.Parcelable;
++/** Build-time stub so the regenerated AIDL compiles; real behavior comes from the merged legacy smali. */
++public class LGImsECallConfig implements Parcelable {
++    public LGImsECallConfig() {}
++    protected LGImsECallConfig(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsECallConfig> CREATOR = new Parcelable.Creator<LGImsECallConfig>() {
++        public LGImsECallConfig createFromParcel(Parcel in) { return new LGImsECallConfig(in); }
++        public LGImsECallConfig[] newArray(int size) { return new LGImsECallConfig[size]; }
++    };
++}
+diff --git a/ims/legacy-java/com/lge/imslegacy/LGImsIcbInfo.java b/ims/legacy-java/com/lge/imslegacy/LGImsIcbInfo.java
+new file mode 100644
+index 00000000..4385e700
+--- /dev/null
++++ b/ims/legacy-java/com/lge/imslegacy/LGImsIcbInfo.java
+@@ -0,0 +1,10 @@
++package com.lge.imslegacy;
++import android.os.Parcel; import android.os.Parcelable;
++public class LGImsIcbInfo implements Parcelable {
++    public LGImsIcbInfo() {} protected LGImsIcbInfo(Parcel in) {}
++    public int describeContents() { return 0; }
++    public void writeToParcel(Parcel dest, int flags) {}
++    public static final Parcelable.Creator<LGImsIcbInfo> CREATOR = new Parcelable.Creator<LGImsIcbInfo>() {
++        public LGImsIcbInfo createFromParcel(Parcel in) { return new LGImsIcbInfo(in); }
++        public LGImsIcbInfo[] newArray(int size) { return new LGImsIcbInfo[size]; } };
++}
+-- 
+2.53.0
+
