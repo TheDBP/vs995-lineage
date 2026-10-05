@@ -11,7 +11,6 @@ device has to set. Without it composer@2.1-service aborts on startup with
 "gralloc-mapper is missing", surfaceflinger dies on the dead HIDL object
 and its onrestart takes zygote and everything hanging off it down every
 five seconds. The boot sits on the LG logo with adbd up.
-
 ---
  BoardConfigCommon.mk | 4 ++++
  1 file changed, 4 insertions(+)

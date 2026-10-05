@@ -15,7 +15,6 @@ On 22.2 that was harmless: SystemUI's qs_header_row_min_height was a fixed
 first row is 112px tall and the clock/date row below it starts inside the
 160px cutout strip, drawing the clock under the camera. Dropping the
 override restores the framework indirection and the 160px rows.
-
 ---
  .../base/core/res/res/values/dimens.xml       | 25 -------------------
  1 file changed, 25 deletions(-)

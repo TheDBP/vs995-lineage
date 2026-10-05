@@ -1,10 +1,9 @@
-From 1151660af102a03798f1aea2572669d910c255a6 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 03:55:41 -0400
-Subject: [PATCH 27/27] msm8996-common: Ims4 rework pipeline (build-ims4.sh
- bundles the 32-bit libs, via forge tools)
+Subject: [PATCH] msm8996-common: Ims4 rework pipeline (build-ims4.sh bundles
+ the 32-bit libs, via forge tools)
 
-Change-Id: I9d9578b0f876b2292b234bf9b615148d970f1d0a
 ---
  ims/.gitignore                                |  3 +
  ims/build-ims4.sh                             | 96 +++++++++++++++++++
@@ -451,6 +450,3 @@ index 00000000..4385e700
 +        public LGImsIcbInfo createFromParcel(Parcel in) { return new LGImsIcbInfo(in); }
 +        public LGImsIcbInfo[] newArray(int size) { return new LGImsIcbInfo[size]; } };
 +}
--- 
-2.53.0
-

@@ -1,10 +1,9 @@
-From 314b1835f130a97f51f7301192bccaf14ce03422 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 03:55:41 -0400
-Subject: [PATCH 26/27] msm8996-common: wire LG IMS (VoLTE) Flash A --
- libimscompat, Ims4 (apk-bundled 32-bit libs), namespace
+Subject: [PATCH] msm8996-common: wire LG IMS (VoLTE) Flash A -- libimscompat,
+ Ims4 (apk-bundled 32-bit libs), namespace
 
-Change-Id: Ia287fc9d110a235b139fe650bc5e41dddfd01d4c
 ---
  ims/Android.bp                 | 17 +++++++++
  ims/ims.mk                     | 10 +++++
@@ -158,6 +157,3 @@ index bed6f3a1..74a10bed 100644
 +
 +# LG IMS (VoLTE) -- Flash A
 +include $(LOCAL_PATH)/ims/ims.mk
--- 
-2.53.0
-

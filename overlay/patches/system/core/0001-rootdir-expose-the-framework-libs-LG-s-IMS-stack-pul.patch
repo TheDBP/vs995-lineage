@@ -1,10 +1,9 @@
-From 62b2571e91931a0bcd24b548eedc79723af4c733 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 03:55:53 -0400
 Subject: [PATCH] rootdir: expose the framework libs LG's IMS stack pulls +
  libimscompat in public.libraries (VoLTE bringup)
 
-Change-Id: Id8dc83a0d15fd655ff317e5b96a188760770f766
 ---
  rootdir/etc/public.libraries.android.txt | 15 +++++++++++++++
  1 file changed, 15 insertions(+)
@@ -32,6 +31,3 @@ index 9be2ef69d..330d6b886 100644
 +libsqlite.so
 +libnetd_client.so
 +libimscompat.so 32
--- 
-2.53.0
-

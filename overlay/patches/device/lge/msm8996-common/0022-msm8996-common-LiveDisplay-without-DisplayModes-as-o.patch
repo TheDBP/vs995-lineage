@@ -19,7 +19,6 @@ system_server dies to the Watchdog on the display thread instead.
 Opt out of DisplayModes with the soong config the HAL exposes (the same
 line device/google/bonito uses), which drops both the constructor and the
 VINTF fragment. PictureAdjustment stays.
-
 ---
  msm8996.mk | 5 +++++
  1 file changed, 5 insertions(+)

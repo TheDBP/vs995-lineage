@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 19:09:14 -0400
-Subject: [PATCH 24/25] msm8996-common: 420 dpi
+Subject: [PATCH] msm8996-common: 420 dpi
 
 The V20's 5.7-inch 1440x2560 panel is 515 ppi; the upstream 560 reports it as 411 dp wide, the
 same layout as a 6-inch 1080p phone, and renders everything a size too large for the room the
@@ -19,7 +19,6 @@ which is the user's choice to make in Settings.
 TARGET_RECOVERY_DENSITY is pinned because recovery derives its asset bucket from
 PRODUCT_AAPT_PREF_CONFIG and build/make/core/Makefile splits xxxhdpi at >= 560; without the pin
 420dpi would silently drop recovery to xxhdpi artwork.
-
 ---
  BoardConfigCommon.mk | 4 ++++
  msm8996.mk           | 2 +-

@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 14:02:54 -0400
-Subject: [PATCH 25/25] msm8996-common: def_device_font_scale 1.15 for the 420
- dpi panel
+Subject: [PATCH] msm8996-common: def_device_font_scale 1.15 for the 420 dpi
+ panel
 
 Since settings version 224 SettingsProvider seeds Settings.System.FONT_SCALE from
 R.dimen.def_device_font_scale (handleDefaultFontScale) and records it as

@@ -1,10 +1,9 @@
-From 5899209dbe6b9420624b0b1ac11d0569ff7ef015 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 08:36:51 -0400
 Subject: [PATCH] msm8996-common: Flash A runtime fixes -- privapp allowlist,
  com.lge.os.Build stub, getSlotId redirect, permissive radio (bringup)
 
-Change-Id: I9d336887de48818c2ca755af39e98464a6625670
 ---
  ims/build-ims4.sh                             | 10 +++++
  .../com/lge/os/Build$CA_TARGET.smali          | 20 ++++++++++
@@ -163,6 +162,3 @@ index 00000000..02455570
 +# surface every denial in one pass (userdebug only); replace with the audit2allow'd rules + remove this
 +# before shipping. See IMS.md / rom-forge debugging-volte.md "Get the reworked OEM app to RUN".
 +permissive radio;
--- 
-2.53.0
-

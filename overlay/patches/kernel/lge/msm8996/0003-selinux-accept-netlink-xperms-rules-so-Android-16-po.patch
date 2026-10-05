@@ -21,7 +21,6 @@ enforces netlink with the legacy nlmsg_* permissions, which the policy
 still grants. They contribute nothing to the ioctl driver set (len=1
 there would deny every ioctl on the socket class) and are skipped in the
 decision path instead of hitting BUG().
-
 ---
  security/selinux/ss/avtab.c    |  1 +
  security/selinux/ss/avtab.h    |  1 +

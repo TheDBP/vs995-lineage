@@ -24,7 +24,6 @@ that clears that word before the modem is started, and enable it for the
 vs995. The VENDOR0 fixup is not used here: on the vs995 the bootloader
 allocates VENDOR0 as the 16-byte hw_rev/model_name header only, and
 mobile data does not depend on it.
-
 ---
  arch/arm64/configs/vendor/lge/vs995.config  |  3 +
  drivers/soc/qcom/Kconfig                    | 10 ++++

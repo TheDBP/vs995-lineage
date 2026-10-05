@@ -23,7 +23,6 @@ odm_hwservice_contexts the same way.
 
 Add the system/vendor/odm alternative to every odm rule, which is what
 the odm_dlkm rules already do.
-
 ---
  private/file_contexts | 54 +++++++++++++++++++++----------------------
  1 file changed, 27 insertions(+), 27 deletions(-)

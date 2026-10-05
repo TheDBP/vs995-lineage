@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:19:40 -0400
+Subject: [PATCH] msm8996-common: declare the LG IMS system features Ims4 gates
+ on
+
+SystemServiceManager only calls ImsSystemServiceImpl.start() -- which registers the "ims" binder
+service -- when PackageManager.hasSystemFeature("com.lge.server.ims") is true. Stock declares it in
+/system/etc/permissions/com.lge.server.ims.xml; ship the equivalent (plus the voice features from
+com.lge.ims.xml; VT/VoWiFi/mmpfservice left out for Flash A). Verified: 'service check ims' found,
+'start :: ims system server' logged. Note: no '--' inside XML comments, SystemConfig silently skips
+an unparseable file.
+
+---
+ ims/ims.mk               |  5 +++++
+ ims/lge-ims-features.xml | 16 ++++++++++++++++
+ 2 files changed, 21 insertions(+)
+ create mode 100644 ims/lge-ims-features.xml
+
+diff --git a/ims/ims.mk b/ims/ims.mk
+index 095487b4..032e2d27 100644
+--- a/ims/ims.mk
++++ b/ims/ims.mk
+@@ -13,3 +13,8 @@ PRODUCT_PACKAGES += \
+ # FATALs at onSystemReady (a framework check, not SELinux). Generated from aapt dump permissions.
+ PRODUCT_COPY_FILES += \
+     $(LOCAL_PATH)/ims/privapp-permissions-com.lge.ims.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/permissions/privapp-permissions-com.lge.ims.xml
++
++# LG system-feature flags Ims4 gates on (stock com.lge.server.ims.xml + com.lge.ims.xml). Without
++# com.lge.server.ims the "ims" binder service is never registered. See the xml for what is left out.
++PRODUCT_COPY_FILES += \
++    $(LOCAL_PATH)/ims/lge-ims-features.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/permissions/lge-ims-features.xml
+diff --git a/ims/lge-ims-features.xml b/ims/lge-ims-features.xml
+new file mode 100644
+index 00000000..0ac9213e
+--- /dev/null
++++ b/ims/lge-ims-features.xml
+@@ -0,0 +1,16 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- LG IMS feature flags, merged from stock /system/etc/permissions/com.lge.server.ims.xml and
++     com.lge.ims.xml. Ims4 gates on these via PackageManager.hasSystemFeature():
++       com.lge.server.ims: SystemServiceManager: without it ImsSystemServiceImpl.start() never runs
++                              and the "ims" binder service is never registered (Service ims: not found).
++       com.lge.ims.volte / hvolte: ProviderDBUpdateHelper, IMSSetting_VZW, FeatureUtils.
++     Deliberately NOT declared (Flash A is voice only): com.lge.ims.vt (ImsVT.apk not shipped),
++     com.lge.ims.vowifi, com.lge.ims.mmpfservice. -->
++<permissions>
++    <feature name="com.lge.server.ims" />
++    <feature name="com.lge.ims.imsphone" />
++    <feature name="com.lge.ims.volte" />
++    <feature name="com.lge.software.volte" />
++    <feature name="com.verizon.ims" />
++    <feature name="com.lge.ims.hvolte" />
++</permissions>

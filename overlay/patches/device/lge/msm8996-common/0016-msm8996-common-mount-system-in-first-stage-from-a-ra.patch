@@ -12,7 +12,6 @@ ignored. First-stage init finds no fstab, exits, and the kernel panics on
 Copy fstab.qcom into the boot ramdisk, mark /system first_stage_mount, and
 address it through /dev/block/by-name, which first stage creates from
 androidboot.boot_devices; /dev/block/bootdevice is a second-stage symlink.
-
 ---
  msm8996.mk             | 4 ++++
  rootdir/etc/fstab.qcom | 6 +++++-

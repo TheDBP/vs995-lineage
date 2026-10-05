@@ -1,0 +1,278 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:19:40 -0400
+Subject: [PATCH] msm8996-common: libimscompat -- android::Parcel ABI shim for
+ the 2016 libims
+
+libims stack-allocates android::Parcel at its 2016 size (52 bytes) in ~200 functions; the A17
+Parcel constructor smashes that frame (__stack_chk_fail in PlatformInterface::GetImsFeatures).
+libimscompat sits first in libims's DT_NEEDED and interposes every Parcel method libims imports with
+a magic-tagged {MAGIC, real*} wrapper over a heap-allocated real Parcel; BBinder::transact/onTransact
+unwrap the arguments so libbinder always sees real Parcels. Real impls are resolved from libbinder's
+own dlopen handle: dlsym(RTLD_NEXT) returns NULL in an app classloader namespace (every lib there is
+RTLD_LOCAL), which the first build turned into a pc=0 SIGSEGV. Unresolvable symbol -> abort loudly.
+
+---
+ ims/libimscompat/Android.bp    |   5 +-
+ ims/libimscompat/imscompat.cpp | 221 +++++++++++++++++++++++++++++++--
+ 2 files changed, 217 insertions(+), 9 deletions(-)
+
+diff --git a/ims/libimscompat/Android.bp b/ims/libimscompat/Android.bp
+index bb69c48e..499c1591 100644
+--- a/ims/libimscompat/Android.bp
++++ b/ims/libimscompat/Android.bp
+@@ -4,7 +4,10 @@
+ cc_library_shared {
+     name: "libimscompat",
+     srcs: ["imscompat.cpp"],
+-    shared_libs: ["libutils"],
++    // libutils: String8 ctor/dtor. libdl: dlsym/RTLD_NEXT for the Parcel ABI shim's real libbinder
++    // impls. libbinder is NOT linked -- our Parcel symbols must interpose it, not depend on it; the
++    // real impls are reached at runtime via RTLD_NEXT (libims pulls libbinder into the namespace).
++    shared_libs: ["libutils", "libdl", "liblog"],
+     // The asm-named load-only stubs deliberately redefine platform symbols; allow it.
+     cflags: ["-Wno-error"],
+     compile_multilib: "32",
+diff --git a/ims/libimscompat/imscompat.cpp b/ims/libimscompat/imscompat.cpp
+index 4ab71ad4..536774a0 100644
+--- a/ims/libimscompat/imscompat.cpp
++++ b/ims/libimscompat/imscompat.cpp
+@@ -1,17 +1,222 @@
+-// libimscompat.so -- compatibility shim so LG's 2016 32-bit IMS stack (libims/libimsmmpf) loads on
+-// Android 17. Wired in via device blob-fixups: libims/libimsmmpf get `add-needed libimscompat.so`
+-// and the dead video DT_NEEDED removed.
++// libimscompat.so -- compatibility shim so LG's 2016 32-bit IMS stack (libims/libimsmmpf) loads AND
++// runs on Android 17. Wired in by ims/build-ims4.sh: libims/libimsmmpf get `add-needed libimscompat.so`
++// (placed FIRST in DT_NEEDED, before libbinder), the dead video DT_NEEDED removed. Being first lets our
++// symbols interpose libbinder's for libims's references, which is how the Parcel shim below works.
+ //
+-//   * REAL reimplementations of two libutils symbols dropped since Android 7.
+-//   * LOAD-ONLY stubs for libimsmmpf's video/OMX symbols -- voice never calls them. The Surface
+-//     constructor and AudioSystem::setParameters are stubs; setParameters must be made real before
+-//     the voice audio path works (see IMS.md). Never let the video path call these.
++//   * android::Parcel ABI shim (the big one). android::Parcel GREW between Android 7 and 17; libims
++//     stack-allocates Parcel at the 2016 size (~52 bytes) in ~200 functions, so A17 libbinder's larger
++//     Parcel constructor smashes libims's stack (PlatformInterface::GetImsFeatures, __stack_chk_fail).
++//     We cannot patch 200 call sites, so we interpose every Parcel method libims imports with a
++//     magic-tagged POINTER WRAPPER: our Parcel() writes {MAGIC, real*} (8 bytes) into libims's slot and
++//     heap-allocates a REAL A17 Parcel; every method checks the tag and forwards to either the wrapped
++//     heap Parcel (objects libims created) or, when the tag is absent, the object itself -- that is a
++//     real libbinder Parcel handed to libims's BnIMSMedia::onTransact by the platform. Real impls are
++//     resolved from libbinder's own dlopen handle (RTLD_NEXT returns NULL in an app namespace).
++//   * REAL reimplementations of two libutils symbols dropped since Android 7 (String8::getPathLeaf,
++//     strndup16to8).
++//   * LOAD-ONLY stubs for libimsmmpf's video/OMX symbols -- voice never calls them. AudioSystem::
++//     setParameters is a stub; make it real before the voice audio path works (see IMS.md).
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstdlib>
+ #include <cstring>
++#include <dlfcn.h>
++
++#include <android/log.h>
++
++// ---------------------------------------------------------------------------------------------------
++// android::Parcel / BBinder ABI shim
++//
++// We declare MINIMAL android types only to get correctly-mangled symbol names and the right calling
++// convention (notably sret for String16/sp<> returns). We never rely on their real layout: our method
++// bodies reinterpret `this` as the wrapper and forward via dlsym'd real impls.
++namespace android {
++class IBinder;
++template <typename T> class sp {       // non-trivial -> returned via sret, matching libbinder
++public:
++    sp();
++    sp(const sp&);
++    ~sp();
++    T* m_ptr;
++};
++class String16 {                       // non-trivial -> sret, matching libbinder
++public:
++    String16();
++    String16(const String16&);
++    ~String16();
++    const void* mString;
++};
++
++class Parcel {
++public:
++    Parcel();
++    ~Parcel();
++    int writeInt32(int32_t);
++    int writeInt64(int64_t);
++    int writeString16(const String16&);
++    int writeStrongBinder(const sp<IBinder>&);
++    int writeInterfaceToken(const String16&);
++    int setData(const uint8_t*, size_t);
++    String16 readString16() const;
++    int32_t readInt32() const;
++    int64_t readInt64() const;
++    sp<IBinder> readStrongBinder() const;
++    bool checkInterface(IBinder*) const;
++    void setDataPosition(size_t) const;
++    const uint8_t* data() const;
++    size_t dataSize() const;
++};
++
++class BBinder {
++public:
++    int onTransact(uint32_t, const Parcel&, Parcel*, uint32_t);
++    int transact(uint32_t, const Parcel&, Parcel*, uint32_t);
++};
++}  // namespace android
++
++namespace {
++const uint32_t PARCEL_MAGIC = 0xC0FFEE42;   // not a plausible first word of a real libbinder Parcel
++struct Wrapper { uint32_t magic; void* real; };
++
++// Over-allocate: comfortably larger than sizeof(android::Parcel) on any platform.
++const size_t REAL_PARCEL_ALLOC = 1024;
++
++// Resolve a real libbinder symbol. NOT dlsym(RTLD_NEXT): in an app classloader namespace every library
++// is RTLD_LOCAL, so bionic's RTLD_NEXT walk skips them all and returns NULL (the first shim build then
++// tail-called 0 from Parcel::writeInt32 -- SIGSEGV pc 0). Look the symbol up in libbinder itself.
++void* binder_handle() {
++    static void* h = dlopen("libbinder.so", RTLD_NOW);   // already loaded via libims's DT_NEEDED
++    return h;
++}
++template <typename F> F rsym(const char* name) {
++    void* p = binder_handle() ? dlsym(binder_handle(), name) : nullptr;
++    if (!p) p = dlsym(RTLD_DEFAULT, name);
++    if (!p) {
++        __android_log_print(ANDROID_LOG_ERROR, "libimscompat", "cannot resolve %s in libbinder", name);
++        abort();   // loud and early beats a pc=0 jump from inside libims
++    }
++    return reinterpret_cast<F>(p);
++}
++
++// The object to actually operate on: the wrapped heap Parcel if this is one of ours, else `self`
++// itself (a real libbinder Parcel, e.g. one handed to libims's onTransact by the platform).
++inline void* real_of(const void* self) {
++    const Wrapper* w = static_cast<const Wrapper*>(self);
++    return (w->magic == PARCEL_MAGIC) ? w->real : const_cast<void*>(self);
++}
++}  // namespace
+ 
+ namespace android {
++
++Parcel::Parcel() {
++    typedef void (*ctor_t)(void*);
++    static ctor_t real_ctor = rsym<ctor_t>("_ZN7android6ParcelC1Ev");
++    void* mem = malloc(REAL_PARCEL_ALLOC);
++    if (real_ctor && mem) real_ctor(mem);
++    Wrapper* w = reinterpret_cast<Wrapper*>(this);
++    w->magic = PARCEL_MAGIC;
++    w->real = mem;
++}
++
++Parcel::~Parcel() {
++    typedef void (*dtor_t)(void*);
++    static dtor_t real_dtor = rsym<dtor_t>("_ZN7android6ParcelD1Ev");
++    Wrapper* w = reinterpret_cast<Wrapper*>(this);
++    if (w->magic == PARCEL_MAGIC) {
++        if (real_dtor && w->real) real_dtor(w->real);
++        free(w->real);
++        w->magic = 0;
++        w->real = nullptr;
++    } else if (real_dtor) {
++        real_dtor(this);   // a real libbinder Parcel (defensive; libims does not own those)
++    }
++}
++
++int Parcel::writeInt32(int32_t v) {
++    typedef int (*F)(void*, int32_t);
++    static F f = rsym<F>("_ZN7android6Parcel10writeInt32Ei");
++    return f(real_of(this), v);
++}
++int Parcel::writeInt64(int64_t v) {
++    typedef int (*F)(void*, int64_t);
++    static F f = rsym<F>("_ZN7android6Parcel10writeInt64Ex");
++    return f(real_of(this), v);
++}
++int Parcel::writeString16(const String16& s) {
++    typedef int (*F)(void*, const void*);
++    static F f = rsym<F>("_ZN7android6Parcel13writeString16ERKNS_8String16E");
++    return f(real_of(this), &s);
++}
++int Parcel::writeStrongBinder(const sp<IBinder>& b) {
++    typedef int (*F)(void*, const void*);
++    static F f = rsym<F>("_ZN7android6Parcel17writeStrongBinderERKNS_2spINS_7IBinderEEE");
++    return f(real_of(this), &b);
++}
++int Parcel::writeInterfaceToken(const String16& s) {
++    typedef int (*F)(void*, const void*);
++    static F f = rsym<F>("_ZN7android6Parcel19writeInterfaceTokenERKNS_8String16E");
++    return f(real_of(this), &s);
++}
++int Parcel::setData(const uint8_t* d, size_t n) {
++    typedef int (*F)(void*, const uint8_t*, size_t);
++    static F f = rsym<F>("_ZN7android6Parcel7setDataEPKhj");
++    return f(real_of(this), d, n);
++}
++String16 Parcel::readString16() const {
++    typedef String16 (*F)(const void*);
++    static F f = rsym<F>("_ZNK7android6Parcel12readString16Ev");
++    return f(real_of(this));
++}
++int32_t Parcel::readInt32() const {
++    typedef int32_t (*F)(const void*);
++    static F f = rsym<F>("_ZNK7android6Parcel9readInt32Ev");
++    return f(real_of(this));
++}
++int64_t Parcel::readInt64() const {
++    typedef int64_t (*F)(const void*);
++    static F f = rsym<F>("_ZNK7android6Parcel9readInt64Ev");
++    return f(real_of(this));
++}
++sp<IBinder> Parcel::readStrongBinder() const {
++    typedef sp<IBinder> (*F)(const void*);
++    static F f = rsym<F>("_ZNK7android6Parcel16readStrongBinderEv");
++    return f(real_of(this));
++}
++bool Parcel::checkInterface(IBinder* b) const {
++    typedef bool (*F)(const void*, IBinder*);
++    static F f = rsym<F>("_ZNK7android6Parcel14checkInterfaceEPNS_7IBinderE");
++    return f(real_of(this), b);
++}
++void Parcel::setDataPosition(size_t pos) const {
++    typedef void (*F)(const void*, size_t);
++    static F f = rsym<F>("_ZNK7android6Parcel15setDataPositionEj");
++    f(real_of(this), pos);
++}
++const uint8_t* Parcel::data() const {
++    typedef const uint8_t* (*F)(const void*);
++    static F f = rsym<F>("_ZNK7android6Parcel4dataEv");
++    return f(real_of(this));
++}
++size_t Parcel::dataSize() const {
++    typedef size_t (*F)(const void*);
++    static F f = rsym<F>("_ZNK7android6Parcel8dataSizeEv");
++    return f(real_of(this));
++}
++
++// BBinder transact/onTransact: `this` is a real BBinder (pass through); unwrap the Parcel args so the
++// platform always sees real Parcels. onTransact is entered with real (untagged) Parcels from libbinder,
++// so real_of() passes them straight through.
++int BBinder::transact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) {
++    typedef int (*F)(void*, uint32_t, const void*, void*, uint32_t);
++    static F f = rsym<F>("_ZN7android7BBinder8transactEjRKNS_6ParcelEPS1_j");
++    return f(this, code, real_of(&data), reply ? real_of(reply) : nullptr, flags);
++}
++int BBinder::onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) {
++    typedef int (*F)(void*, uint32_t, const void*, void*, uint32_t);
++    static F f = rsym<F>("_ZN7android7BBinder10onTransactEjRKNS_6ParcelEPS1_j");
++    return f(this, code, real_of(&data), reply ? real_of(reply) : nullptr, flags);
++}
++
+ // String8 is a single pointer to its SharedBuffer data; the ctor/dtor come from the live libutils.
+ class String8 {
+ public:
+@@ -22,7 +227,7 @@ public:
+ private:
+     const char* mString;
+ };
+-// com.android...String8::getPathLeaf() const  (mangled _ZNK7android7String811getPathLeafEv)
++// android::String8::getPathLeaf() const  (dropped since Android 7)
+ String8 String8::getPathLeaf() const {
+     const char* cp = strrchr(mString, '/');
+     return cp ? String8(cp + 1) : String8(*this);

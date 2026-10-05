@@ -28,7 +28,6 @@ watchdog kills system_server every boot.
 Declare the kernel version this program actually requires so an older
 one skips it, which is not a failure. UeventInit() already handles the
 filter being absent -- it logs a warning and receives unfiltered uevents.
-
 ---
  health/utils/libhealthloop/filterPowerSupplyEvents.c | 12 +++++++++++-
  1 file changed, 11 insertions(+), 1 deletion(-)

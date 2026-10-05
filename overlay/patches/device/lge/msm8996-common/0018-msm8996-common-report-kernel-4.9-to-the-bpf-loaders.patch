@@ -15,7 +15,6 @@ KernelUtils.h) and the platform bpfloader, nothing else, so the override
 is scoped to the code that gates on it. 4.9.0 keeps every bpf feature
 decision at what this kernel actually implements; the remaining 4.9
 accommodations come from the Connectivity and system/bpf patches.
-
 ---
  vendor_prop.mk | 7 +++++++
  1 file changed, 7 insertions(+)

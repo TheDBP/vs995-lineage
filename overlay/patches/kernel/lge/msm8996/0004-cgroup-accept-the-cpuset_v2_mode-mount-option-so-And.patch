@@ -15,7 +15,6 @@ Accept the option and report it in the mount options. The behaviour it
 requests upstream -- a cpuset keeping its configured cpu mask across
 hotplug -- is already provided here by the Android cpus_requested change
 in kernel/cpuset.c, so no cpuset.c change is needed.
-
 ---
  include/linux/cgroup-defs.h | 3 +++
  kernel/cgroup.c             | 6 ++++++

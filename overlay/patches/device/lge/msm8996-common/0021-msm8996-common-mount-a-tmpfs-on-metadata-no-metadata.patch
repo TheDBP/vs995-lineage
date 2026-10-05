@@ -17,7 +17,6 @@ post-fs actions that populate it. The platform labels the /metadata
 subdirectories from file_contexts, so each of those types needs
 tmpfs:filesystem associate. Flag overrides and the other /metadata state
 do not persist across a reboot on this tmpfs.
-
 ---
  BoardConfigCommon.mk       |  4 ++++
  rootdir/etc/init.target.rc |  4 ++++

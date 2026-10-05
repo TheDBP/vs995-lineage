@@ -360,7 +360,7 @@ index d027d6c7..4f045cf7 100644
 +}  // namespace aidl
 diff --git a/ir/android.hardware.ir-service.lge.rc b/ir/android.hardware.ir-service.lge.rc
 new file mode 100644
-index 00000000..ba7339a6
+index 00000000..878902fc
 --- /dev/null
 +++ b/ir/android.hardware.ir-service.lge.rc
 @@ -0,0 +1,11 @@
@@ -470,6 +470,7 @@ index bcd0894a..6aeb98ff 100644
 +    return EXIT_FAILURE;  // should not reach
  }
 diff --git a/sepolicy/vendor/file_contexts b/sepolicy/vendor/file_contexts
+index 7e050fc3..3002deca 100644
 --- a/sepolicy/vendor/file_contexts
 +++ b/sepolicy/vendor/file_contexts
 @@ -46,7 +46,7 @@

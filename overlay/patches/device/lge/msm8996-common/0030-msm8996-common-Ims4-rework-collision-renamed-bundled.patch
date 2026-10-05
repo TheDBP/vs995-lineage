@@ -1,0 +1,2285 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:19:40 -0400
+Subject: [PATCH] msm8996-common: Ims4 rework -- collision-renamed bundled
+ libs, smali fixups, verify stubs
+
+build-ims4.sh: bundle libdiag/libssl/libcrypto/libjpeg too (libqmi needs libdiag; the 2016 libssl
+pair must stay matched), rename any bundled lib whose name also exists in /system/lib to a private
+*_lgeims.so soname and rewrite the bundled DT_NEEDEDs (the app namespace otherwise finds the newer,
+incompatible system copy first), store lib/ uncompressed, and run smali-fixups.py after the method
+redirects. New verify stubs under extra-smali (LG framework classes absent on 24.0, incl.
+com.android.lge.lgsvcitems.LgSvcCmd -- '' matches the app's own null fallback) and more redirects.
+
+---
+ ims/.gitignore                                |   1 +
+ ims/build-ims4.sh                             |  23 +-
+ .../android/telephony/AvailableRatInfo.smali  |  15 +
+ .../telephony/TelephonyManagerEx.smali        |  32 ++
+ .../telephony/IIMSPhone$Stub$Proxy.smali      | 380 ++++++++++++++++++
+ .../internal/telephony/IIMSPhone$Stub.smali   | 307 ++++++++++++++
+ .../internal/telephony/IIMSPhone.smali        |  48 +++
+ .../telephony/ISysMonitor$Stub$Proxy.smali    | 208 ++++++++++
+ .../internal/telephony/ISysMonitor$Stub.smali | 211 ++++++++++
+ .../internal/telephony/ISysMonitor.smali      |  32 ++
+ .../com/android/lge/lgsvcitems/LgSvcCmd.smali |  43 ++
+ .../com/lge/gba/android/GbaService.smali      |  16 +
+ .../com/lge/gba/android/IGbaAuthManager.smali |  10 +
+ .../com/lge/gba/android/IGbaParamsMe.smali    |  13 +
+ .../gba/android/IGbaUUaSessionParams.smali    |  13 +
+ .../lge/ims/sms/IImsSmsCallback$Stub.smali    |  16 +
+ .../com/lge/ims/sms/IImsSmsCallback.smali     |   4 +
+ .../com/lge/ims/sms/IImsSmsService$Stub.smali |  16 +
+ .../com/lge/ims/sms/IImsSmsService.smali      |  25 ++
+ .../lge/imslegacy/ImsExternalCallState.smali  |  10 +
+ .../internal/IImsStreamMediaSession.smali     |  10 +
+ .../IImsVideoCallCallbackEx$Stub.smali        |  16 +
+ .../internal/IImsVideoCallCallbackEx.smali    |  16 +
+ .../IImsVideoCallProviderEx$Stub.smali        |  16 +
+ .../internal/IImsVideoCallProviderEx.smali    |  37 ++
+ .../lge/imslegacy/internal/LGImsProfile.smali |  39 ++
+ .../telephony/ITelephonyEx$Stub.smali         |  16 +
+ .../lge/internal/telephony/ITelephonyEx.smali |   7 +
+ .../LGPhoneConstants$LteStateInfo.smali       |  40 ++
+ .../LGPhoneConstants$SIBInfoForEPDN.smali     |  26 ++
+ .../internal/telephony/LGPhoneConstants.smali |  10 +
+ .../com/lge/lgdata/LGDataFeature.smali        |  24 ++
+ .../LGDataPhoneConstants$EmcFailCause.smali   |  17 +
+ .../LGDataPhoneConstants$LteStateInfo.smali   |  30 ++
+ ...taPhoneConstants$VolteAndEPDNSupport.smali |  26 ++
+ .../com/lge/lgdata/LGDataPhoneConstants.smali |  10 +
+ .../lge/systemservice/core/LGContext.smali    |  16 +
+ .../systemservice/core/SoftPhoneManager.smali |  46 +++
+ .../com/lge/uicc/LGUiccManager.smali          |  16 +
+ ims/method-redirects.txt                      |  18 +
+ ims/smali-fixups.py                           |  60 +++
+ 41 files changed, 1917 insertions(+), 2 deletions(-)
+ create mode 100644 ims/extra-smali/android/telephony/AvailableRatInfo.smali
+ create mode 100644 ims/extra-smali/android/telephony/TelephonyManagerEx.smali
+ create mode 100644 ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub$Proxy.smali
+ create mode 100644 ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub.smali
+ create mode 100644 ims/extra-smali/com/android/internal/telephony/IIMSPhone.smali
+ create mode 100644 ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub$Proxy.smali
+ create mode 100644 ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub.smali
+ create mode 100644 ims/extra-smali/com/android/internal/telephony/ISysMonitor.smali
+ create mode 100644 ims/extra-smali/com/android/lge/lgsvcitems/LgSvcCmd.smali
+ create mode 100644 ims/extra-smali/com/lge/gba/android/GbaService.smali
+ create mode 100644 ims/extra-smali/com/lge/gba/android/IGbaAuthManager.smali
+ create mode 100644 ims/extra-smali/com/lge/gba/android/IGbaParamsMe.smali
+ create mode 100644 ims/extra-smali/com/lge/gba/android/IGbaUUaSessionParams.smali
+ create mode 100644 ims/extra-smali/com/lge/ims/sms/IImsSmsCallback$Stub.smali
+ create mode 100644 ims/extra-smali/com/lge/ims/sms/IImsSmsCallback.smali
+ create mode 100644 ims/extra-smali/com/lge/ims/sms/IImsSmsService$Stub.smali
+ create mode 100644 ims/extra-smali/com/lge/ims/sms/IImsSmsService.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/ImsExternalCallState.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/internal/IImsStreamMediaSession.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx$Stub.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx$Stub.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx.smali
+ create mode 100644 ims/extra-smali/com/lge/imslegacy/internal/LGImsProfile.smali
+ create mode 100644 ims/extra-smali/com/lge/internal/telephony/ITelephonyEx$Stub.smali
+ create mode 100644 ims/extra-smali/com/lge/internal/telephony/ITelephonyEx.smali
+ create mode 100644 ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali
+ create mode 100644 ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN.smali
+ create mode 100644 ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants.smali
+ create mode 100644 ims/extra-smali/com/lge/lgdata/LGDataFeature.smali
+ create mode 100644 ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$EmcFailCause.smali
+ create mode 100644 ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali
+ create mode 100644 ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali
+ create mode 100644 ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants.smali
+ create mode 100644 ims/extra-smali/com/lge/systemservice/core/LGContext.smali
+ create mode 100644 ims/extra-smali/com/lge/systemservice/core/SoftPhoneManager.smali
+ create mode 100644 ims/extra-smali/com/lge/uicc/LGUiccManager.smali
+ create mode 100644 ims/smali-fixups.py
+
+diff --git a/ims/.gitignore b/ims/.gitignore
+index 90998d16..4813e6f3 100644
+--- a/ims/.gitignore
++++ b/ims/.gitignore
+@@ -1,3 +1,4 @@
+ # Proprietary-derived + intermediates -- produced by build-ims4.sh, never committed.
+ .work/
+ Ims4-reworked.apk
++.push-sysapp/
+diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
+index 19c1fa69..57f10dd7 100755
+--- a/ims/build-ims4.sh
++++ b/ims/build-ims4.sh
+@@ -25,7 +25,7 @@ set -euo pipefail
+ APK="${1:?usage: build-ims4.sh <Ims4.apk> <boot-ims-common.oat> <system.image|bootcp> <framework-smali> <stock-libs-dir> <out.apk>}"
+ IMSCOMMON="${2:?boot-ims-common.oat}"; BOOTCP="${3:?system.image or bootcp dir}"; FWSMALI="${4:?framework smali dir}"
+ STOCKLIBS="${5:?stock-libs-dir (32-bit LG SIP + QMI libs)}"; OUT="${6:?out.apk}"
+-LG_LIBS="libims libimsmmpf libimswms libext2_uuid libvss_ims_qcci libqmi libqmi_cci libqmi_common_so libqmi_encdec libqmi_client_qmux libqmiservices libidl libsmemlog libmdmdetect libdsutils"
++LG_LIBS="libims libimsmmpf libimswms libext2_uuid libvss_ims_qcci libdiag libssl libcrypto libjpeg libqmi libqmi_cci libqmi_common_so libqmi_encdec libqmi_client_qmux libqmiservices libidl libsmemlog libmdmdetect libdsutils"
+ HERE="$(cd "$(dirname "$0")" && pwd)"
+ FORGE="${FORGE:-$HERE/../../../../../forge}"; [ -d "$FORGE/tools" ] || FORGE="${FORGE_DIR:?set FORGE to the forge dir}"
+ T="$HERE/.work"; rm -rf "$T"; mkdir -p "$T"
+@@ -80,6 +80,10 @@ if [ -f "$HERE/method-redirects.txt" ]; then
+   done < "$HERE/method-redirects.txt"
+   echo "   redirects applied"
+ fi
++if [ -f "$HERE/smali-fixups.py" ]; then
++  echo ">> 4.6 apply structural smali fixups"
++  python3 "$HERE/smali-fixups.py" "$T/merged"
++fi
+ 
+ echo ">> 5. bundle the 32-bit LG libs into the apk (patchelf-fixed) -- forces 32-bit + app-namespace load"
+ PE=""; for p in patchelf-0_18 patchelf-0_17_2 patchelf; do c="$S/prebuilts/extract-tools/linux-x86/bin/$p"; [ -x "$c" ] && PE="$c" && break; done
+@@ -97,10 +101,25 @@ done
+ "$PE" --add-needed libimscompat.so "$T/lib/armeabi-v7a/libimsmmpf.so"
+ echo "   bundled $(ls "$T/lib/armeabi-v7a" | wc -l) libs, DT_NEEDED fixed"
+ 
++# Collision rename: a bundled lib whose name also exists in /system/lib (newer, incompatible ABI)
++# gets shadowed -- the app namespace finds the already-loaded SYSTEM copy first, and the 2016 symbols
++# (e.g. boringssl CBS_data in libssl->libcrypto) are missing. Rename every such bundled lib to a
++# private -lgeims soname + redirect all bundled libs' DT_NEEDED to it, so the 2016 pair stays matched.
++SYSLIB_DIR="$S/out/target/product/vs995/system/lib"
++for f in "$T"/lib/armeabi-v7a/*.so; do
++  b=$(basename "$f" .so)
++  if [ -f "$SYSLIB_DIR/$b.so" ]; then                      # name clashes with a system lib
++    "$PE" --set-soname "${b}_lgeims.so" "$f"
++    mv "$f" "$T/lib/armeabi-v7a/${b}_lgeims.so"
++    for g in "$T"/lib/armeabi-v7a/*.so; do "$PE" --replace-needed "$b.so" "${b}_lgeims.so" "$g" 2>/dev/null || true; done
++    echo "   collision-renamed $b.so -> ${b}_lgeims.so"
++  fi
++done
++
+ echo ">> 6. assemble + repackage unsigned (dex + bundled libs)"
+ [ -d "$HERE/extra-smali" ] && cp -r "$HERE/extra-smali/." "$T/merged/" && echo "   merged $(find "$HERE/extra-smali" -name "*.smali" | wc -l) extra LG-framework stub classes"
+ java -jar "$SM" assemble "$T/merged" -o "$T/classes.dex"
+ cp "$APK" "$OUT"
+-(cd "$T" && zip -q "$OUT" classes.dex && zip -q -r "$OUT" lib)
++(cd "$T" && zip -q "$OUT" classes.dex && zip -q -0 -X -r "$OUT" lib)
+ zip -q -d "$OUT" 'META-INF/*' >/dev/null 2>&1 || true
+ echo ">> built $OUT ($(stat -c %s "$OUT") bytes, $(unzip -l "$OUT" | grep -c 'lib/armeabi-v7a/.*\.so') libs bundled) -- unsigned, for android_app_import certificate:platform"
+diff --git a/ims/extra-smali/android/telephony/AvailableRatInfo.smali b/ims/extra-smali/android/telephony/AvailableRatInfo.smali
+new file mode 100644
+index 00000000..48e6b585
+--- /dev/null
++++ b/ims/extra-smali/android/telephony/AvailableRatInfo.smali
+@@ -0,0 +1,15 @@
++# A17 lacks LG's android.telephony.AvailableRatInfo (a RAT-availability data carrier pushed by LG's
++# telephony service, which does not exist on A17). The app only reads its apnType/rats fields from a
++# message that never arrives here, so a plain two-field class satisfies dex verification.
++.class public Landroid/telephony/AvailableRatInfo;
++.super Ljava/lang/Object;
++
++.field public apnType:Ljava/lang/String;
++
++.field public rats:[Ljava/lang/Integer;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
+diff --git a/ims/extra-smali/android/telephony/TelephonyManagerEx.smali b/ims/extra-smali/android/telephony/TelephonyManagerEx.smali
+new file mode 100644
+index 00000000..e180f598
+--- /dev/null
++++ b/ims/extra-smali/android/telephony/TelephonyManagerEx.smali
+@@ -0,0 +1,32 @@
++# A17 lacks LG's android.telephony.TelephonyManagerEx. The app fetches it via getSystemService("phone")
++# + check-cast (which throws ClassCastException on A17's real TelephonyManager, caught by the app's own
++# try/catch) so these setters are never actually reached. No-op bodies satisfy verification; real modem
++# wiring (setCallType/setAccessNetwork/startHVoLteModeSelection) is a Flash B concern -- see IMS.md.
++.class public Landroid/telephony/TelephonyManagerEx;
++.super Ljava/lang/Object;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public setAccessNetwork(II)V
++    .registers 3
++    return-void
++.end method
++
++.method public setCallType(II)V
++    .registers 3
++    return-void
++.end method
++
++.method public setPreference(II)V
++    .registers 3
++    return-void
++.end method
++
++.method public startHVoLteModeSelection()V
++    .registers 1
++    return-void
++.end method
+diff --git a/ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub$Proxy.smali b/ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub$Proxy.smali
+new file mode 100644
+index 00000000..9263cf14
+--- /dev/null
++++ b/ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub$Proxy.smali
+@@ -0,0 +1,380 @@
++.class Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;
++.super Ljava/lang/Object;
++.source "IIMSPhone.java"
++
++# interfaces
++.implements Lcom/android/internal/telephony/IIMSPhone;
++
++
++# annotations
++.annotation system Ldalvik/annotation/EnclosingClass;
++    value = Lcom/android/internal/telephony/IIMSPhone$Stub;
++.end annotation
++
++.annotation system Ldalvik/annotation/InnerClass;
++    accessFlags = 0xa
++    name = "Proxy"
++.end annotation
++
++
++# instance fields
++.field private mRemote:Landroid/os/IBinder;
++
++
++# direct methods
++.method constructor <init>(Landroid/os/IBinder;)V
++    .registers 2
++    .param p1, "remote"    # Landroid/os/IBinder;
++
++    .prologue
++    .line 105
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++
++    .line 107
++    iput-object p1, p0, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    .line 105
++    return-void
++.end method
++
++
++# virtual methods
++.method public asBinder()Landroid/os/IBinder;
++    .registers 2
++
++    .prologue
++    .line 111
++    iget-object v0, p0, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    return-object v0
++.end method
++
++.method public getInterfaceDescriptor()Ljava/lang/String;
++    .registers 2
++
++    .prologue
++    .line 115
++    const-string/jumbo v0, "com.android.internal.telephony.IIMSPhone"
++
++    return-object v0
++.end method
++
++.method public getSysInfo(IILjava/lang/String;)[Ljava/lang/String;
++    .registers 10
++    .param p1, "item"    # I
++    .param p2, "param"    # I
++    .param p3, "paramEx"    # Ljava/lang/String;
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    .line 128
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v0
++
++    .line 129
++    .local v0, "_data":Landroid/os/Parcel;
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v1
++
++    .line 132
++    .local v1, "_reply":Landroid/os/Parcel;
++    :try_start_8
++    const-string/jumbo v3, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {v0, v3}, Landroid/os/Parcel;->writeInterfaceToken(Ljava/lang/String;)V
++
++    .line 133
++    invoke-virtual {v0, p1}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 134
++    invoke-virtual {v0, p2}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 135
++    invoke-virtual {v0, p3}, Landroid/os/Parcel;->writeString(Ljava/lang/String;)V
++
++    .line 136
++    iget-object v3, p0, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    const/4 v4, 0x1
++
++    const/4 v5, 0x0
++
++    invoke-interface {v3, v4, v0, v1, v5}, Landroid/os/IBinder;->transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    .line 137
++    invoke-virtual {v1}, Landroid/os/Parcel;->readException()V
++
++    .line 138
++    invoke-virtual {v1}, Landroid/os/Parcel;->createStringArray()[Ljava/lang/String;
++    :try_end_24
++    .catchall {:try_start_8 .. :try_end_24} :catchall_2c
++
++    move-result-object v2
++
++    .line 141
++    .local v2, "_result":[Ljava/lang/String;
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 142
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 144
++    return-object v2
++
++    .line 140
++    .end local v2    # "_result":[Ljava/lang/String;
++    :catchall_2c
++    move-exception v3
++
++    .line 141
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 142
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 140
++    throw v3
++.end method
++
++.method public setImsStatusToModem(IIII)V
++    .registers 10
++    .param p1, "type"    # I
++    .param p2, "state"    # I
++    .param p3, "reason"    # I
++    .param p4, "slot_id"    # I
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    .line 166
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v0
++
++    .line 167
++    .local v0, "_data":Landroid/os/Parcel;
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v1
++
++    .line 169
++    .local v1, "_reply":Landroid/os/Parcel;
++    :try_start_8
++    const-string/jumbo v2, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {v0, v2}, Landroid/os/Parcel;->writeInterfaceToken(Ljava/lang/String;)V
++
++    .line 170
++    invoke-virtual {v0, p1}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 171
++    invoke-virtual {v0, p2}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 172
++    invoke-virtual {v0, p3}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 173
++    invoke-virtual {v0, p4}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 174
++    iget-object v2, p0, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    const/4 v3, 0x3
++
++    const/4 v4, 0x0
++
++    invoke-interface {v2, v3, v0, v1, v4}, Landroid/os/IBinder;->transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    .line 175
++    invoke-virtual {v1}, Landroid/os/Parcel;->readException()V
++    :try_end_24
++    .catchall {:try_start_8 .. :try_end_24} :catchall_2b
++
++    .line 178
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 179
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 164
++    return-void
++
++    .line 177
++    :catchall_2b
++    move-exception v2
++
++    .line 178
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 179
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 177
++    throw v2
++.end method
++
++.method public setListener(Lcom/android/internal/telephony/ISysMonitor;)V
++    .registers 7
++    .param p1, "listener"    # Lcom/android/internal/telephony/ISysMonitor;
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    const/4 v2, 0x0
++
++    .line 184
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v0
++
++    .line 185
++    .local v0, "_data":Landroid/os/Parcel;
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v1
++
++    .line 187
++    .local v1, "_reply":Landroid/os/Parcel;
++    :try_start_9
++    const-string/jumbo v3, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {v0, v3}, Landroid/os/Parcel;->writeInterfaceToken(Ljava/lang/String;)V
++
++    .line 188
++    if-eqz p1, :cond_15
++
++    invoke-interface {p1}, Lcom/android/internal/telephony/ISysMonitor;->asBinder()Landroid/os/IBinder;
++
++    move-result-object v2
++
++    :cond_15
++    invoke-virtual {v0, v2}, Landroid/os/Parcel;->writeStrongBinder(Landroid/os/IBinder;)V
++
++    .line 189
++    iget-object v2, p0, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    const/4 v3, 0x4
++
++    const/4 v4, 0x0
++
++    invoke-interface {v2, v3, v0, v1, v4}, Landroid/os/IBinder;->transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    .line 190
++    invoke-virtual {v1}, Landroid/os/Parcel;->readException()V
++    :try_end_22
++    .catchall {:try_start_9 .. :try_end_22} :catchall_29
++
++    .line 193
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 194
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 182
++    return-void
++
++    .line 192
++    :catchall_29
++    move-exception v2
++
++    .line 193
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 194
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 192
++    throw v2
++.end method
++
++.method public setSysInfo(IIILjava/lang/String;)V
++    .registers 10
++    .param p1, "item"    # I
++    .param p2, "param1"    # I
++    .param p3, "param2"    # I
++    .param p4, "paramEx"    # Ljava/lang/String;
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    .line 148
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v0
++
++    .line 149
++    .local v0, "_data":Landroid/os/Parcel;
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v1
++
++    .line 151
++    .local v1, "_reply":Landroid/os/Parcel;
++    :try_start_8
++    const-string/jumbo v2, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {v0, v2}, Landroid/os/Parcel;->writeInterfaceToken(Ljava/lang/String;)V
++
++    .line 152
++    invoke-virtual {v0, p1}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 153
++    invoke-virtual {v0, p2}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 154
++    invoke-virtual {v0, p3}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 155
++    invoke-virtual {v0, p4}, Landroid/os/Parcel;->writeString(Ljava/lang/String;)V
++
++    .line 156
++    iget-object v2, p0, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    const/4 v3, 0x2
++
++    const/4 v4, 0x0
++
++    invoke-interface {v2, v3, v0, v1, v4}, Landroid/os/IBinder;->transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    .line 157
++    invoke-virtual {v1}, Landroid/os/Parcel;->readException()V
++    :try_end_24
++    .catchall {:try_start_8 .. :try_end_24} :catchall_2b
++
++    .line 160
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 161
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 146
++    return-void
++
++    .line 159
++    :catchall_2b
++    move-exception v2
++
++    .line 160
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 161
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 159
++    throw v2
++.end method
+diff --git a/ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub.smali b/ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub.smali
+new file mode 100644
+index 00000000..48e35ac1
+--- /dev/null
++++ b/ims/extra-smali/com/android/internal/telephony/IIMSPhone$Stub.smali
+@@ -0,0 +1,307 @@
++.class public abstract Lcom/android/internal/telephony/IIMSPhone$Stub;
++.super Landroid/os/Binder;
++.source "IIMSPhone.java"
++
++# interfaces
++.implements Lcom/android/internal/telephony/IIMSPhone;
++
++
++# annotations
++.annotation system Ldalvik/annotation/EnclosingClass;
++    value = Lcom/android/internal/telephony/IIMSPhone;
++.end annotation
++
++.annotation system Ldalvik/annotation/InnerClass;
++    accessFlags = 0x409
++    name = "Stub"
++.end annotation
++
++.annotation system Ldalvik/annotation/MemberClasses;
++    value = {
++        Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;
++    }
++.end annotation
++
++
++# static fields
++.field private static final DESCRIPTOR:Ljava/lang/String; = "com.android.internal.telephony.IIMSPhone"
++
++.field static final TRANSACTION_getSysInfo:I = 0x1
++
++.field static final TRANSACTION_setImsStatusToModem:I = 0x3
++
++.field static final TRANSACTION_setListener:I = 0x4
++
++.field static final TRANSACTION_setSysInfo:I = 0x2
++
++
++# direct methods
++.method public constructor <init>()V
++    .registers 2
++
++    .prologue
++    .line 14
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++
++    .line 16
++    const-string/jumbo v0, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {p0, p0, v0}, Landroid/os/Binder;->attachInterface(Landroid/os/IInterface;Ljava/lang/String;)V
++
++    .line 14
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/IIMSPhone;
++    .registers 3
++    .param p0, "obj"    # Landroid/os/IBinder;
++
++    .prologue
++    const/4 v1, 0x0
++
++    .line 24
++    if-nez p0, :cond_4
++
++    .line 25
++    return-object v1
++
++    .line 27
++    :cond_4
++    const-string/jumbo v1, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-interface {p0, v1}, Landroid/os/IBinder;->queryLocalInterface(Ljava/lang/String;)Landroid/os/IInterface;
++
++    move-result-object v0
++
++    .line 28
++    .local v0, "iin":Landroid/os/IInterface;
++    if-eqz v0, :cond_14
++
++    instance-of v1, v0, Lcom/android/internal/telephony/IIMSPhone;
++
++    if-eqz v1, :cond_14
++
++    .line 29
++    check-cast v0, Lcom/android/internal/telephony/IIMSPhone;
++
++    .end local v0    # "iin":Landroid/os/IInterface;
++    return-object v0
++
++    .line 31
++    .restart local v0    # "iin":Landroid/os/IInterface;
++    :cond_14
++    new-instance v1, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;
++
++    invoke-direct {v1, p0}, Lcom/android/internal/telephony/IIMSPhone$Stub$Proxy;-><init>(Landroid/os/IBinder;)V
++
++    return-object v1
++.end method
++
++
++# virtual methods
++.method public asBinder()Landroid/os/IBinder;
++    .registers 1
++
++    .prologue
++    .line 35
++    return-object p0
++.end method
++
++.method public onTransact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++    .registers 15
++    .param p1, "code"    # I
++    .param p2, "data"    # Landroid/os/Parcel;
++    .param p3, "reply"    # Landroid/os/Parcel;
++    .param p4, "flags"    # I
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    const/4 v9, 0x1
++
++    .line 39
++    sparse-switch p1, :sswitch_data_7c
++
++    .line 100
++    invoke-super {p0, p1, p2, p3, p4}, Landroid/os/Binder;->onTransact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    move-result v8
++
++    return v8
++
++    .line 43
++    :sswitch_9
++    const-string/jumbo v8, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {p3, v8}, Landroid/os/Parcel;->writeString(Ljava/lang/String;)V
++
++    .line 44
++    return v9
++
++    .line 48
++    :sswitch_10
++    const-string/jumbo v8, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {p2, v8}, Landroid/os/Parcel;->enforceInterface(Ljava/lang/String;)V
++
++    .line 50
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v0
++
++    .line 52
++    .local v0, "_arg0":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v2
++
++    .line 54
++    .local v2, "_arg1":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readString()Ljava/lang/String;
++
++    move-result-object v4
++
++    .line 55
++    .local v4, "_arg2":Ljava/lang/String;
++    invoke-virtual {p0, v0, v2, v4}, Lcom/android/internal/telephony/IIMSPhone$Stub;->getSysInfo(IILjava/lang/String;)[Ljava/lang/String;
++
++    move-result-object v7
++
++    .line 56
++    .local v7, "_result":[Ljava/lang/String;
++    invoke-virtual {p3}, Landroid/os/Parcel;->writeNoException()V
++
++    .line 57
++    invoke-virtual {p3, v7}, Landroid/os/Parcel;->writeStringArray([Ljava/lang/String;)V
++
++    .line 58
++    return v9
++
++    .line 62
++    .end local v0    # "_arg0":I
++    .end local v2    # "_arg1":I
++    .end local v4    # "_arg2":Ljava/lang/String;
++    .end local v7    # "_result":[Ljava/lang/String;
++    :sswitch_2d
++    const-string/jumbo v8, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {p2, v8}, Landroid/os/Parcel;->enforceInterface(Ljava/lang/String;)V
++
++    .line 64
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v0
++
++    .line 66
++    .restart local v0    # "_arg0":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v2
++
++    .line 68
++    .restart local v2    # "_arg1":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v3
++
++    .line 70
++    .local v3, "_arg2":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readString()Ljava/lang/String;
++
++    move-result-object v6
++
++    .line 71
++    .local v6, "_arg3":Ljava/lang/String;
++    invoke-virtual {p0, v0, v2, v3, v6}, Lcom/android/internal/telephony/IIMSPhone$Stub;->setSysInfo(IIILjava/lang/String;)V
++
++    .line 72
++    invoke-virtual {p3}, Landroid/os/Parcel;->writeNoException()V
++
++    .line 73
++    return v9
++
++    .line 77
++    .end local v0    # "_arg0":I
++    .end local v2    # "_arg1":I
++    .end local v3    # "_arg2":I
++    .end local v6    # "_arg3":Ljava/lang/String;
++    :sswitch_4a
++    const-string/jumbo v8, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {p2, v8}, Landroid/os/Parcel;->enforceInterface(Ljava/lang/String;)V
++
++    .line 79
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v0
++
++    .line 81
++    .restart local v0    # "_arg0":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v2
++
++    .line 83
++    .restart local v2    # "_arg1":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v3
++
++    .line 85
++    .restart local v3    # "_arg2":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v5
++
++    .line 86
++    .local v5, "_arg3":I
++    invoke-virtual {p0, v0, v2, v3, v5}, Lcom/android/internal/telephony/IIMSPhone$Stub;->setImsStatusToModem(IIII)V
++
++    .line 87
++    invoke-virtual {p3}, Landroid/os/Parcel;->writeNoException()V
++
++    .line 88
++    return v9
++
++    .line 92
++    .end local v0    # "_arg0":I
++    .end local v2    # "_arg1":I
++    .end local v3    # "_arg2":I
++    .end local v5    # "_arg3":I
++    :sswitch_67
++    const-string/jumbo v8, "com.android.internal.telephony.IIMSPhone"
++
++    invoke-virtual {p2, v8}, Landroid/os/Parcel;->enforceInterface(Ljava/lang/String;)V
++
++    .line 94
++    invoke-virtual {p2}, Landroid/os/Parcel;->readStrongBinder()Landroid/os/IBinder;
++
++    move-result-object v8
++
++    invoke-static {v8}, Lcom/android/internal/telephony/ISysMonitor$Stub;->asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/ISysMonitor;
++
++    move-result-object v1
++
++    .line 95
++    .local v1, "_arg0":Lcom/android/internal/telephony/ISysMonitor;
++    invoke-virtual {p0, v1}, Lcom/android/internal/telephony/IIMSPhone$Stub;->setListener(Lcom/android/internal/telephony/ISysMonitor;)V
++
++    .line 96
++    invoke-virtual {p3}, Landroid/os/Parcel;->writeNoException()V
++
++    .line 97
++    return v9
++
++    .line 39
++    :sswitch_data_7c
++    .sparse-switch
++        0x1 -> :sswitch_10
++        0x2 -> :sswitch_2d
++        0x3 -> :sswitch_4a
++        0x4 -> :sswitch_67
++        0x5f4e5446 -> :sswitch_9
++    .end sparse-switch
++.end method
+diff --git a/ims/extra-smali/com/android/internal/telephony/IIMSPhone.smali b/ims/extra-smali/com/android/internal/telephony/IIMSPhone.smali
+new file mode 100644
+index 00000000..0883e2a3
+--- /dev/null
++++ b/ims/extra-smali/com/android/internal/telephony/IIMSPhone.smali
+@@ -0,0 +1,48 @@
++.class public interface abstract Lcom/android/internal/telephony/IIMSPhone;
++.super Ljava/lang/Object;
++.source "IIMSPhone.java"
++
++# interfaces
++.implements Landroid/os/IInterface;
++
++
++# annotations
++.annotation system Ldalvik/annotation/MemberClasses;
++    value = {
++        Lcom/android/internal/telephony/IIMSPhone$Stub;
++    }
++.end annotation
++
++
++# virtual methods
++.method public abstract getSysInfo(IILjava/lang/String;)[Ljava/lang/String;
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++.end method
++
++.method public abstract setImsStatusToModem(IIII)V
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++.end method
++
++.method public abstract setListener(Lcom/android/internal/telephony/ISysMonitor;)V
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++.end method
++
++.method public abstract setSysInfo(IIILjava/lang/String;)V
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++.end method
+diff --git a/ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub$Proxy.smali b/ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub$Proxy.smali
+new file mode 100644
+index 00000000..8b5967d5
+--- /dev/null
++++ b/ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub$Proxy.smali
+@@ -0,0 +1,208 @@
++.class Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;
++.super Ljava/lang/Object;
++.source "ISysMonitor.java"
++
++# interfaces
++.implements Lcom/android/internal/telephony/ISysMonitor;
++
++
++# annotations
++.annotation system Ldalvik/annotation/EnclosingClass;
++    value = Lcom/android/internal/telephony/ISysMonitor$Stub;
++.end annotation
++
++.annotation system Ldalvik/annotation/InnerClass;
++    accessFlags = 0xa
++    name = "Proxy"
++.end annotation
++
++
++# instance fields
++.field private mRemote:Landroid/os/IBinder;
++
++
++# direct methods
++.method constructor <init>(Landroid/os/IBinder;)V
++    .registers 2
++    .param p1, "remote"    # Landroid/os/IBinder;
++
++    .prologue
++    .line 76
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++
++    .line 78
++    iput-object p1, p0, Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    .line 76
++    return-void
++.end method
++
++
++# virtual methods
++.method public asBinder()Landroid/os/IBinder;
++    .registers 2
++
++    .prologue
++    .line 82
++    iget-object v0, p0, Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    return-object v0
++.end method
++
++.method public getInterfaceDescriptor()Ljava/lang/String;
++    .registers 2
++
++    .prologue
++    .line 86
++    const-string/jumbo v0, "com.android.internal.telephony.ISysMonitor"
++
++    return-object v0
++.end method
++
++.method public onLteStateChanged([I)V
++    .registers 7
++    .param p1, "param"    # [I
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    .line 121
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v0
++
++    .line 122
++    .local v0, "_data":Landroid/os/Parcel;
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v1
++
++    .line 124
++    .local v1, "_reply":Landroid/os/Parcel;
++    :try_start_8
++    const-string/jumbo v2, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-virtual {v0, v2}, Landroid/os/Parcel;->writeInterfaceToken(Ljava/lang/String;)V
++
++    .line 125
++    invoke-virtual {v0, p1}, Landroid/os/Parcel;->writeIntArray([I)V
++
++    .line 126
++    iget-object v2, p0, Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    const/4 v3, 0x2
++
++    const/4 v4, 0x0
++
++    invoke-interface {v2, v3, v0, v1, v4}, Landroid/os/IBinder;->transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    .line 127
++    invoke-virtual {v1}, Landroid/os/Parcel;->readException()V
++    :try_end_1b
++    .catchall {:try_start_8 .. :try_end_1b} :catchall_22
++
++    .line 130
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 131
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 119
++    return-void
++
++    .line 129
++    :catchall_22
++    move-exception v2
++
++    .line 130
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 131
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 129
++    throw v2
++.end method
++
++.method public onPhoneStateChanged(IIILjava/lang/String;)V
++    .registers 10
++    .param p1, "item"    # I
++    .param p2, "param1"    # I
++    .param p3, "param2"    # I
++    .param p4, "paramEx"    # Ljava/lang/String;
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    .line 101
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v0
++
++    .line 102
++    .local v0, "_data":Landroid/os/Parcel;
++    invoke-static {}, Landroid/os/Parcel;->obtain()Landroid/os/Parcel;
++
++    move-result-object v1
++
++    .line 104
++    .local v1, "_reply":Landroid/os/Parcel;
++    :try_start_8
++    const-string/jumbo v2, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-virtual {v0, v2}, Landroid/os/Parcel;->writeInterfaceToken(Ljava/lang/String;)V
++
++    .line 105
++    invoke-virtual {v0, p1}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 106
++    invoke-virtual {v0, p2}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 107
++    invoke-virtual {v0, p3}, Landroid/os/Parcel;->writeInt(I)V
++
++    .line 108
++    invoke-virtual {v0, p4}, Landroid/os/Parcel;->writeString(Ljava/lang/String;)V
++
++    .line 109
++    iget-object v2, p0, Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;->mRemote:Landroid/os/IBinder;
++
++    const/4 v3, 0x1
++
++    const/4 v4, 0x0
++
++    invoke-interface {v2, v3, v0, v1, v4}, Landroid/os/IBinder;->transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    .line 110
++    invoke-virtual {v1}, Landroid/os/Parcel;->readException()V
++    :try_end_24
++    .catchall {:try_start_8 .. :try_end_24} :catchall_2b
++
++    .line 113
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 114
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 99
++    return-void
++
++    .line 112
++    :catchall_2b
++    move-exception v2
++
++    .line 113
++    invoke-virtual {v1}, Landroid/os/Parcel;->recycle()V
++
++    .line 114
++    invoke-virtual {v0}, Landroid/os/Parcel;->recycle()V
++
++    .line 112
++    throw v2
++.end method
+diff --git a/ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub.smali b/ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub.smali
+new file mode 100644
+index 00000000..1e96ca05
+--- /dev/null
++++ b/ims/extra-smali/com/android/internal/telephony/ISysMonitor$Stub.smali
+@@ -0,0 +1,211 @@
++.class public abstract Lcom/android/internal/telephony/ISysMonitor$Stub;
++.super Landroid/os/Binder;
++.source "ISysMonitor.java"
++
++# interfaces
++.implements Lcom/android/internal/telephony/ISysMonitor;
++
++
++# annotations
++.annotation system Ldalvik/annotation/EnclosingClass;
++    value = Lcom/android/internal/telephony/ISysMonitor;
++.end annotation
++
++.annotation system Ldalvik/annotation/InnerClass;
++    accessFlags = 0x409
++    name = "Stub"
++.end annotation
++
++.annotation system Ldalvik/annotation/MemberClasses;
++    value = {
++        Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;
++    }
++.end annotation
++
++
++# static fields
++.field private static final DESCRIPTOR:Ljava/lang/String; = "com.android.internal.telephony.ISysMonitor"
++
++.field static final TRANSACTION_onLteStateChanged:I = 0x2
++
++.field static final TRANSACTION_onPhoneStateChanged:I = 0x1
++
++
++# direct methods
++.method public constructor <init>()V
++    .registers 2
++
++    .prologue
++    .line 14
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++
++    .line 16
++    const-string/jumbo v0, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-virtual {p0, p0, v0}, Landroid/os/Binder;->attachInterface(Landroid/os/IInterface;Ljava/lang/String;)V
++
++    .line 14
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/ISysMonitor;
++    .registers 3
++    .param p0, "obj"    # Landroid/os/IBinder;
++
++    .prologue
++    const/4 v1, 0x0
++
++    .line 24
++    if-nez p0, :cond_4
++
++    .line 25
++    return-object v1
++
++    .line 27
++    :cond_4
++    const-string/jumbo v1, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-interface {p0, v1}, Landroid/os/IBinder;->queryLocalInterface(Ljava/lang/String;)Landroid/os/IInterface;
++
++    move-result-object v0
++
++    .line 28
++    .local v0, "iin":Landroid/os/IInterface;
++    if-eqz v0, :cond_14
++
++    instance-of v1, v0, Lcom/android/internal/telephony/ISysMonitor;
++
++    if-eqz v1, :cond_14
++
++    .line 29
++    check-cast v0, Lcom/android/internal/telephony/ISysMonitor;
++
++    .end local v0    # "iin":Landroid/os/IInterface;
++    return-object v0
++
++    .line 31
++    .restart local v0    # "iin":Landroid/os/IInterface;
++    :cond_14
++    new-instance v1, Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;
++
++    invoke-direct {v1, p0}, Lcom/android/internal/telephony/ISysMonitor$Stub$Proxy;-><init>(Landroid/os/IBinder;)V
++
++    return-object v1
++.end method
++
++
++# virtual methods
++.method public asBinder()Landroid/os/IBinder;
++    .registers 1
++
++    .prologue
++    .line 35
++    return-object p0
++.end method
++
++.method public onTransact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++    .registers 12
++    .param p1, "code"    # I
++    .param p2, "data"    # Landroid/os/Parcel;
++    .param p3, "reply"    # Landroid/os/Parcel;
++    .param p4, "flags"    # I
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++
++    .prologue
++    const/4 v6, 0x1
++
++    .line 39
++    sparse-switch p1, :sswitch_data_3e
++
++    .line 71
++    invoke-super {p0, p1, p2, p3, p4}, Landroid/os/Binder;->onTransact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
++
++    move-result v5
++
++    return v5
++
++    .line 43
++    :sswitch_9
++    const-string/jumbo v5, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-virtual {p3, v5}, Landroid/os/Parcel;->writeString(Ljava/lang/String;)V
++
++    .line 44
++    return v6
++
++    .line 48
++    :sswitch_10
++    const-string/jumbo v5, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-virtual {p2, v5}, Landroid/os/Parcel;->enforceInterface(Ljava/lang/String;)V
++
++    .line 50
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v0
++
++    .line 52
++    .local v0, "_arg0":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v2
++
++    .line 54
++    .local v2, "_arg1":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readInt()I
++
++    move-result v3
++
++    .line 56
++    .local v3, "_arg2":I
++    invoke-virtual {p2}, Landroid/os/Parcel;->readString()Ljava/lang/String;
++
++    move-result-object v4
++
++    .line 57
++    .local v4, "_arg3":Ljava/lang/String;
++    invoke-virtual {p0, v0, v2, v3, v4}, Lcom/android/internal/telephony/ISysMonitor$Stub;->onPhoneStateChanged(IIILjava/lang/String;)V
++
++    .line 58
++    invoke-virtual {p3}, Landroid/os/Parcel;->writeNoException()V
++
++    .line 59
++    return v6
++
++    .line 63
++    .end local v0    # "_arg0":I
++    .end local v2    # "_arg1":I
++    .end local v3    # "_arg2":I
++    .end local v4    # "_arg3":Ljava/lang/String;
++    :sswitch_2d
++    const-string/jumbo v5, "com.android.internal.telephony.ISysMonitor"
++
++    invoke-virtual {p2, v5}, Landroid/os/Parcel;->enforceInterface(Ljava/lang/String;)V
++
++    .line 65
++    invoke-virtual {p2}, Landroid/os/Parcel;->createIntArray()[I
++
++    move-result-object v1
++
++    .line 66
++    .local v1, "_arg0":[I
++    invoke-virtual {p0, v1}, Lcom/android/internal/telephony/ISysMonitor$Stub;->onLteStateChanged([I)V
++
++    .line 67
++    invoke-virtual {p3}, Landroid/os/Parcel;->writeNoException()V
++
++    .line 68
++    return v6
++
++    .line 39
++    :sswitch_data_3e
++    .sparse-switch
++        0x1 -> :sswitch_10
++        0x2 -> :sswitch_2d
++        0x5f4e5446 -> :sswitch_9
++    .end sparse-switch
++.end method
+diff --git a/ims/extra-smali/com/android/internal/telephony/ISysMonitor.smali b/ims/extra-smali/com/android/internal/telephony/ISysMonitor.smali
+new file mode 100644
+index 00000000..de16fd53
+--- /dev/null
++++ b/ims/extra-smali/com/android/internal/telephony/ISysMonitor.smali
+@@ -0,0 +1,32 @@
++.class public interface abstract Lcom/android/internal/telephony/ISysMonitor;
++.super Ljava/lang/Object;
++.source "ISysMonitor.java"
++
++# interfaces
++.implements Landroid/os/IInterface;
++
++
++# annotations
++.annotation system Ldalvik/annotation/MemberClasses;
++    value = {
++        Lcom/android/internal/telephony/ISysMonitor$Stub;
++    }
++.end annotation
++
++
++# virtual methods
++.method public abstract onLteStateChanged([I)V
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++.end method
++
++.method public abstract onPhoneStateChanged(IIILjava/lang/String;)V
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Landroid/os/RemoteException;
++        }
++    .end annotation
++.end method
+diff --git a/ims/extra-smali/com/android/lge/lgsvcitems/LgSvcCmd.smali b/ims/extra-smali/com/android/lge/lgsvcitems/LgSvcCmd.smali
+new file mode 100644
+index 00000000..36a62e47
+--- /dev/null
++++ b/ims/extra-smali/com/android/lge/lgsvcitems/LgSvcCmd.smali
+@@ -0,0 +1,43 @@
++.class public Lcom/android/lge/lgsvcitems/LgSvcCmd;
++.super Ljava/lang/Object;
++# verify stub: LG svc-cmd (hidden-menu NV items) service is absent on this ROM; "" == the app's own
++# "LgSvcCmd is null" fallback value.
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public getCmdValue(I)Ljava/lang/String;
++    .registers 3
++    const-string v0, ""
++    return-object v0
++.end method
++
++.method public getIQcrilMsgTunnelServiceStatus()Z
++    .registers 2
++    const/4 v0, 0x0
++    return v0
++.end method
++
++.method public static getInstance(Landroid/content/Context;)Lcom/android/lge/lgsvcitems/LgSvcCmd;
++    .registers 3
++    new-instance v0, Lcom/android/lge/lgsvcitems/LgSvcCmd;
++    invoke-direct {v0}, Lcom/android/lge/lgsvcitems/LgSvcCmd;-><init>()V
++    return-object v0
++.end method
++
++.method public getVal(I)Ljava/lang/String;
++    .registers 3
++    const-string v0, ""
++    return-object v0
++.end method
++
++.method public setCmdValue(ILjava/lang/String;)I
++    .registers 4
++    const/4 v0, 0x0
++    return v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/gba/android/GbaService.smali b/ims/extra-smali/com/lge/gba/android/GbaService.smali
+new file mode 100644
+index 00000000..e521b2db
+--- /dev/null
++++ b/ims/extra-smali/com/lge/gba/android/GbaService.smali
+@@ -0,0 +1,16 @@
++.class public Lcom/lge/gba/android/GbaService;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static getAuthManager(Landroid/content/Context;)Lcom/lge/gba/android/IGbaAuthManager;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/gba/android/IGbaAuthManager.smali b/ims/extra-smali/com/lge/gba/android/IGbaAuthManager.smali
+new file mode 100644
+index 00000000..8ebeaf42
+--- /dev/null
++++ b/ims/extra-smali/com/lge/gba/android/IGbaAuthManager.smali
+@@ -0,0 +1,10 @@
++.class public interface abstract Lcom/lge/gba/android/IGbaAuthManager;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract performGbaMeAuthenticationWithParams(Ljava/lang/String;[BLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Lcom/lge/gba/android/IGbaParamsMe;
++.end method
++
++.method public abstract performGbaUAuthentication(Ljava/lang/String;[BLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/lge/gba/android/IGbaUUaSessionParams;
++.end method
++
+diff --git a/ims/extra-smali/com/lge/gba/android/IGbaParamsMe.smali b/ims/extra-smali/com/lge/gba/android/IGbaParamsMe.smali
+new file mode 100644
+index 00000000..ff7d05e4
+--- /dev/null
++++ b/ims/extra-smali/com/lge/gba/android/IGbaParamsMe.smali
+@@ -0,0 +1,13 @@
++.class public interface abstract Lcom/lge/gba/android/IGbaParamsMe;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract getBTid()Ljava/lang/String;
++.end method
++
++.method public abstract getKeyLifeTime()Ljava/lang/String;
++.end method
++
++.method public abstract getKsNaf()[B
++.end method
++
+diff --git a/ims/extra-smali/com/lge/gba/android/IGbaUUaSessionParams.smali b/ims/extra-smali/com/lge/gba/android/IGbaUUaSessionParams.smali
+new file mode 100644
+index 00000000..24e61e68
+--- /dev/null
++++ b/ims/extra-smali/com/lge/gba/android/IGbaUUaSessionParams.smali
+@@ -0,0 +1,13 @@
++.class public interface abstract Lcom/lge/gba/android/IGbaUUaSessionParams;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract getBTid()Ljava/lang/String;
++.end method
++
++.method public abstract getKeyLifeTime()Ljava/lang/String;
++.end method
++
++.method public abstract getKsExtNaf()[B
++.end method
++
+diff --git a/ims/extra-smali/com/lge/ims/sms/IImsSmsCallback$Stub.smali b/ims/extra-smali/com/lge/ims/sms/IImsSmsCallback$Stub.smali
+new file mode 100644
+index 00000000..4ce94177
+--- /dev/null
++++ b/ims/extra-smali/com/lge/ims/sms/IImsSmsCallback$Stub.smali
+@@ -0,0 +1,16 @@
++.class public abstract Lcom/lge/ims/sms/IImsSmsCallback$Stub;
++.super Landroid/os/Binder;
++.implements Lcom/lge/ims/sms/IImsSmsCallback;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/lge/ims/sms/IImsSmsCallback;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/ims/sms/IImsSmsCallback.smali b/ims/extra-smali/com/lge/ims/sms/IImsSmsCallback.smali
+new file mode 100644
+index 00000000..0a14530e
+--- /dev/null
++++ b/ims/extra-smali/com/lge/ims/sms/IImsSmsCallback.smali
+@@ -0,0 +1,4 @@
++.class public interface abstract Lcom/lge/ims/sms/IImsSmsCallback;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
+diff --git a/ims/extra-smali/com/lge/ims/sms/IImsSmsService$Stub.smali b/ims/extra-smali/com/lge/ims/sms/IImsSmsService$Stub.smali
+new file mode 100644
+index 00000000..f5400390
+--- /dev/null
++++ b/ims/extra-smali/com/lge/ims/sms/IImsSmsService$Stub.smali
+@@ -0,0 +1,16 @@
++.class public abstract Lcom/lge/ims/sms/IImsSmsService$Stub;
++.super Landroid/os/Binder;
++.implements Lcom/lge/ims/sms/IImsSmsService;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/lge/ims/sms/IImsSmsService;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/ims/sms/IImsSmsService.smali b/ims/extra-smali/com/lge/ims/sms/IImsSmsService.smali
+new file mode 100644
+index 00000000..f234af62
+--- /dev/null
++++ b/ims/extra-smali/com/lge/ims/sms/IImsSmsService.smali
+@@ -0,0 +1,25 @@
++.class public interface abstract Lcom/lge/ims/sms/IImsSmsService;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract close()V
++.end method
++
++.method public abstract notifySmsMoStatus(IIII)I
++.end method
++
++.method public abstract notifySmsMt(ILjava/lang/String;)I
++.end method
++
++.method public abstract open(I)I
++.end method
++
++.method public abstract setCallback(Lcom/lge/ims/sms/IImsSmsCallback;)V
++.end method
++
++.method public abstract updateServiceStatus(I)V
++.end method
++
++.method public abstract updateSmsFormat(I)V
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/ImsExternalCallState.smali b/ims/extra-smali/com/lge/imslegacy/ImsExternalCallState.smali
+new file mode 100644
+index 00000000..f6c3cc6c
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/ImsExternalCallState.smali
+@@ -0,0 +1,10 @@
++.class public Lcom/lge/imslegacy/ImsExternalCallState;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/internal/IImsStreamMediaSession.smali b/ims/extra-smali/com/lge/imslegacy/internal/IImsStreamMediaSession.smali
+new file mode 100644
+index 00000000..61f8a026
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/internal/IImsStreamMediaSession.smali
+@@ -0,0 +1,10 @@
++.class public Lcom/lge/imslegacy/internal/IImsStreamMediaSession;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx$Stub.smali b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx$Stub.smali
+new file mode 100644
+index 00000000..78b64741
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx$Stub.smali
+@@ -0,0 +1,16 @@
++.class public abstract Lcom/lge/imslegacy/internal/IImsVideoCallCallbackEx$Stub;
++.super Landroid/os/Binder;
++.implements Lcom/lge/imslegacy/internal/IImsVideoCallCallbackEx;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/lge/imslegacy/internal/IImsVideoCallCallbackEx;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx.smali b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx.smali
+new file mode 100644
+index 00000000..b45aedf7
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallCallbackEx.smali
+@@ -0,0 +1,16 @@
++.class public interface abstract Lcom/lge/imslegacy/internal/IImsVideoCallCallbackEx;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract changeMediaDebugInfo(Lcom/lge/imslegacy/LGImsCallMediaDebugInfo;)V
++.end method
++
++.method public abstract changePeerDisplayOrientation(I)V
++.end method
++
++.method public abstract handleCallSessionEventEx(I)V
++.end method
++
++.method public abstract handleCallSessionResultEvent(II)V
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx$Stub.smali b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx$Stub.smali
+new file mode 100644
+index 00000000..191ce79f
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx$Stub.smali
+@@ -0,0 +1,16 @@
++.class public abstract Lcom/lge/imslegacy/internal/IImsVideoCallProviderEx$Stub;
++.super Landroid/os/Binder;
++.implements Lcom/lge/imslegacy/internal/IImsVideoCallProviderEx;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/lge/imslegacy/internal/IImsVideoCallProviderEx;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx.smali b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx.smali
+new file mode 100644
+index 00000000..caeaef12
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/internal/IImsVideoCallProviderEx.smali
+@@ -0,0 +1,37 @@
++.class public interface abstract Lcom/lge/imslegacy/internal/IImsVideoCallProviderEx;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract captureVideo(Ljava/lang/String;I)V
++.end method
++
++.method public abstract setCallbackEx(Lcom/lge/imslegacy/internal/IImsVideoCallCallbackEx;)V
++.end method
++
++.method public abstract setCameraBrightness(I)V
++.end method
++
++.method public abstract setCameraOnOff(I)V
++.end method
++
++.method public abstract setDisplayOrientation(II)V
++.end method
++
++.method public abstract setDisplaySize(II)V
++.end method
++
++.method public abstract setMultitaskingState(I)V
++.end method
++
++.method public abstract startBackground()V
++.end method
++
++.method public abstract stopBackground()V
++.end method
++
++.method public abstract swapDisplay()V
++.end method
++
++.method public abstract updateDisplay(I)V
++.end method
++
+diff --git a/ims/extra-smali/com/lge/imslegacy/internal/LGImsProfile.smali b/ims/extra-smali/com/lge/imslegacy/internal/LGImsProfile.smali
+new file mode 100644
+index 00000000..422572a1
+--- /dev/null
++++ b/ims/extra-smali/com/lge/imslegacy/internal/LGImsProfile.smali
+@@ -0,0 +1,39 @@
++.class public Lcom/lge/imslegacy/internal/LGImsProfile;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static init(Landroid/content/Context;)V
++    .registers 2
++    return-void
++.end method
++
++.method public static isInitialized()Z
++    .registers 1
++    const/4 v0, 0x0
++    return v0
++.end method
++
++.method public static isLGImsStackSupported()Z
++    .registers 1
++    const/4 v0, 0x0
++    return v0
++.end method
++
++.method public static isLoggableForPrivacy()Z
++    .registers 1
++    const/4 v0, 0x0
++    return v0
++.end method
++
++.method public static isMyLineRequiredForUt()Z
++    .registers 1
++    const/4 v0, 0x0
++    return v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/internal/telephony/ITelephonyEx$Stub.smali b/ims/extra-smali/com/lge/internal/telephony/ITelephonyEx$Stub.smali
+new file mode 100644
+index 00000000..d934f7b3
+--- /dev/null
++++ b/ims/extra-smali/com/lge/internal/telephony/ITelephonyEx$Stub.smali
+@@ -0,0 +1,16 @@
++.class public abstract Lcom/lge/internal/telephony/ITelephonyEx$Stub;
++.super Landroid/os/Binder;
++.implements Lcom/lge/internal/telephony/ITelephonyEx;
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Landroid/os/Binder;-><init>()V
++    return-void
++.end method
++
++.method public static asInterface(Landroid/os/IBinder;)Lcom/lge/internal/telephony/ITelephonyEx;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/internal/telephony/ITelephonyEx.smali b/ims/extra-smali/com/lge/internal/telephony/ITelephonyEx.smali
+new file mode 100644
+index 00000000..dca9b60f
+--- /dev/null
++++ b/ims/extra-smali/com/lge/internal/telephony/ITelephonyEx.smali
+@@ -0,0 +1,7 @@
++.class public interface abstract Lcom/lge/internal/telephony/ITelephonyEx;
++.super Ljava/lang/Object;
++.implements Landroid/os/IInterface;
++
++.method public abstract getAvailableRats(I)Landroid/telephony/AvailableRatInfo;
++.end method
++
+diff --git a/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali
+new file mode 100644
+index 00000000..18cdec8a
+--- /dev/null
++++ b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$LteStateInfo.smali
+@@ -0,0 +1,40 @@
++.class public Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.super Ljava/lang/Object;
++
++.field public static EMERGENCY_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static NORMAL_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++.field public static NORMAL_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++
++.method static constructor <clinit>()V
++    .registers 1
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->EMERGENCY_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NORMAL_ATTACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;->NORMAL_DETACHED:Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    return-void
++.end method
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static fromInt(I)Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    .registers 3
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$LteStateInfo;-><init>()V
++    return-object v0
++.end method
++
++.method public getCode()I
++    .registers 2
++    const/4 v0, 0x0
++    return v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN.smali b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN.smali
+new file mode 100644
+index 00000000..2897c1b7
+--- /dev/null
++++ b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN.smali
+@@ -0,0 +1,26 @@
++.class public Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;
++.super Ljava/lang/Object;
++
++.field public static EPDN_BARRED:Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;
++
++.method static constructor <clinit>()V
++    .registers 1
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;
++    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;-><init>()V
++    sput-object v0, Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;->EPDN_BARRED:Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;
++    return-void
++.end method
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static fromInt(I)Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;
++    .registers 3
++    new-instance v0, Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;
++    invoke-direct {v0}, Lcom/lge/internal/telephony/LGPhoneConstants$SIBInfoForEPDN;-><init>()V
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants.smali b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants.smali
+new file mode 100644
+index 00000000..efa018a2
+--- /dev/null
++++ b/ims/extra-smali/com/lge/internal/telephony/LGPhoneConstants.smali
+@@ -0,0 +1,10 @@
++.class public Lcom/lge/internal/telephony/LGPhoneConstants;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataFeature.smali b/ims/extra-smali/com/lge/lgdata/LGDataFeature.smali
+new file mode 100644
+index 00000000..312862be
+--- /dev/null
++++ b/ims/extra-smali/com/lge/lgdata/LGDataFeature.smali
+@@ -0,0 +1,24 @@
++.class public Lcom/lge/lgdata/LGDataFeature;
++.super Ljava/lang/Object;
++
++.field public MPDNset:I
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static getInstance()Lcom/lge/lgdata/LGDataFeature;
++    .registers 2
++    new-instance v0, Lcom/lge/lgdata/LGDataFeature;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataFeature;-><init>()V
++    return-object v0
++.end method
++
++.method public toString()Ljava/lang/String;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$EmcFailCause.smali b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$EmcFailCause.smali
+new file mode 100644
+index 00000000..f483bf8d
+--- /dev/null
++++ b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$EmcFailCause.smali
+@@ -0,0 +1,17 @@
++.class public Lcom/lge/lgdata/LGDataPhoneConstants$EmcFailCause;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static fromInt(I)Lcom/lge/lgdata/LGDataPhoneConstants$EmcFailCause;
++    .registers 3
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$EmcFailCause;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$EmcFailCause;-><init>()V
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali
+new file mode 100644
+index 00000000..159848d7
+--- /dev/null
++++ b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$LteStateInfo.smali
+@@ -0,0 +1,30 @@
++.class public Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.super Ljava/lang/Object;
++
++.field public static EMERGENCY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++.field public static EMERGENCY_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++
++.method static constructor <clinit>()V
++    .registers 1
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>()V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->EMERGENCY_ATTACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>()V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;->EMERGENCY_DETACHED:Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    return-void
++.end method
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static fromInt(I)Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    .registers 3
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$LteStateInfo;-><init>()V
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali
+new file mode 100644
+index 00000000..1b244616
+--- /dev/null
++++ b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport.smali
+@@ -0,0 +1,26 @@
++.class public Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++.super Ljava/lang/Object;
++
++.field public static VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++
++.method static constructor <clinit>()V
++    .registers 1
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>()V
++    sput-object v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;->VOLTE_SUPPORT:Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    return-void
++.end method
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static fromInt(I)Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    .registers 3
++    new-instance v0, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;
++    invoke-direct {v0}, Lcom/lge/lgdata/LGDataPhoneConstants$VolteAndEPDNSupport;-><init>()V
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants.smali b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants.smali
+new file mode 100644
+index 00000000..f183d8ef
+--- /dev/null
++++ b/ims/extra-smali/com/lge/lgdata/LGDataPhoneConstants.smali
+@@ -0,0 +1,10 @@
++.class public Lcom/lge/lgdata/LGDataPhoneConstants;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
+diff --git a/ims/extra-smali/com/lge/systemservice/core/LGContext.smali b/ims/extra-smali/com/lge/systemservice/core/LGContext.smali
+new file mode 100644
+index 00000000..55b8c650
+--- /dev/null
++++ b/ims/extra-smali/com/lge/systemservice/core/LGContext.smali
+@@ -0,0 +1,16 @@
++.class public Lcom/lge/systemservice/core/LGContext;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public getLGSystemService(Ljava/lang/String;)Ljava/lang/Object;
++    .registers 3
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/systemservice/core/SoftPhoneManager.smali b/ims/extra-smali/com/lge/systemservice/core/SoftPhoneManager.smali
+new file mode 100644
+index 00000000..5af96b58
+--- /dev/null
++++ b/ims/extra-smali/com/lge/systemservice/core/SoftPhoneManager.smali
+@@ -0,0 +1,46 @@
++.class public Lcom/lge/systemservice/core/SoftPhoneManager;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public getChallengeResponse(Ljava/lang/String;Ljava/lang/String;J)Ljava/util/Map;
++    .registers 6
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
++.method public getFeatures(Ljava/lang/String;)Landroid/os/Bundle;
++    .registers 3
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
++.method public getNetwork(J)Ljava/util/Map;
++    .registers 4
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
++.method public releaseNetwork(Ljava/lang/String;Ljava/lang/String;J)I
++    .registers 6
++    const/4 v0, 0x0
++    return v0
++.end method
++
++.method public revokeATSToken()Landroid/os/Bundle;
++    .registers 2
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
++.method public updateFeatures(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)Landroid/os/Bundle;
++    .registers 7
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/extra-smali/com/lge/uicc/LGUiccManager.smali b/ims/extra-smali/com/lge/uicc/LGUiccManager.smali
+new file mode 100644
+index 00000000..385685f8
+--- /dev/null
++++ b/ims/extra-smali/com/lge/uicc/LGUiccManager.smali
+@@ -0,0 +1,16 @@
++.class public Lcom/lge/uicc/LGUiccManager;
++.super Ljava/lang/Object;
++
++
++.method public constructor <init>()V
++    .registers 1
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++    return-void
++.end method
++
++.method public static getProperty(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;
++    .registers 4
++    const/4 v0, 0x0
++    return-object v0
++.end method
++
+diff --git a/ims/method-redirects.txt b/ims/method-redirects.txt
+index 0fdb10d3..b06b2d66 100644
+--- a/ims/method-redirects.txt
++++ b/ims/method-redirects.txt
+@@ -1,2 +1,20 @@
+ # Framework API drift: methods LG's 2016 Ims4 calls that were renamed on A17. old|new (same signature).
+ Landroid/telephony/SubscriptionManager;->getSlotId(I)I|Landroid/telephony/SubscriptionManager;->getSlotIndex(I)I
++# A17 removed PhoneStateListener(int subId); drop to no-arg super (subId now lives on the TelephonyManager)
++invoke-direct {p0, p2}, Landroid/telephony/PhoneStateListener;-><init>(I)V|invoke-direct {p0}, Landroid/telephony/PhoneStateListener;-><init>()V
++# --- Stale com.android.internal.R.bool resource IDs ---
++# LG's 2016 ImsManager/ImsCall/ImsGlobal baked compile-time com.android.internal.R.bool IDs; resource
++# IDs shift every Android release, so these throw Resources$NotFoundException on A17. Remap each stale
++# 2016 id -> the current A17 id for the same-named config bool (looked up in framework-res.apk).
++# 0x112008e (config_carrier_volte_provisioning_required) has no A17 bool; point it at a valid bool
++# (config_carrier_volte_available) so it never throws -- provisioning is not gated for this bringup.
++0x112008a|0x01110311
++0x112008b|0x01110307
++0x112008c|0x01110143
++0x112008d|0x01110072
++0x112008e|0x01110072
++0x112008f|0x01110073
++0x1120090|0x01110144
++0x1120091|0x01110074
++0x1120092|0x01110145
++0x1120093|0x01110075
+diff --git a/ims/smali-fixups.py b/ims/smali-fixups.py
+new file mode 100644
+index 00000000..4313822b
+--- /dev/null
++++ b/ims/smali-fixups.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python3
++# smali-fixups.py <merged-smali-dir>
++# Structural smali edits to the reworked Ims4 app that cannot be expressed as a one-line
++# method-redirect (adding fields, splicing instructions). Each fixup is idempotent -- safe to re-run.
++# Keep these minimal and documented; prefer method-redirects.txt for pure symbol swaps.
++import os, sys
++
++def fix_phonestatelistener_subid(root):
++    # A17 removed android.telephony.PhoneStateListener(int subId); its package-private mSubId field went
++    # with it. LG's PhoneStateAgent$PhoneStateListenerEx read that inherited field (getSubId / line 299).
++    # We dropped the super(subId) call (see method-redirects.txt), so give the subclass its own mSubId
++    # and set it from the ctor's subId param, keeping getSubId() working.
++    f = os.path.join(root, 'com/lge/ims/common/agents/PhoneStateAgent$PhoneStateListenerEx.smali')
++    if not os.path.exists(f): return False
++    s = open(f).read()
++    if '->mSubId:I' not in s: return False
++    changed = False
++    if '.field private mSubId:I' not in s:
++        s = s.replace('.field final synthetic this$0:Lcom/lge/ims/common/agents/PhoneStateAgent;',
++                      '.field private mSubId:I\n\n.field final synthetic this$0:Lcom/lge/ims/common/agents/PhoneStateAgent;', 1)
++        changed = True
++    sup = 'invoke-direct {p0}, Landroid/telephony/PhoneStateListener;-><init>()V'
++    cs = s.index('.method public constructor <init>(Lcom/lge/ims/common/agents/PhoneStateAgent;I)V')
++    ce = s.index('.end method', cs)
++    ctor = s[cs:ce]
++    if 'mSubId:I' not in ctor.split(sup)[0] and sup in ctor:
++        ctor2 = ctor.replace(sup, sup + '\n\n    iput p2, p0, Lcom/lge/ims/common/agents/PhoneStateAgent$PhoneStateListenerEx;->mSubId:I', 1)
++        s = s[:cs] + ctor2 + s[ce:]; changed = True
++    if changed: open(f, 'w').write(s)
++    return changed
++
++
++def noop_telephony_registry_notify(root):
++    # A17 changed ITelephonyRegistry.notifyCallState(int,String) and removed notifyVoLteServiceStateChanged
++    # / android.telephony.VoLteServiceState. LG's TelephonyCallStateRegistry pushes IMS call-state into
++    # the framework via the 2016 signatures; the NoSuchMethodError is an Error (not caught by its
++    # try/catch Exception) so it aborts core-module load. No-op the push for Flash A (service registers);
++    # wire the A17 signature in Flash B. Replace the method body with "return true" (notify succeeded).
++    f = os.path.join(root, 'com/lge/ims/server/ims/telephony/TelephonyCallStateRegistry.smali')
++    if not os.path.exists(f): return False
++    s = open(f).read()
++    import re
++    sig = '.method private static notifyCallStateForTelephonyRegistry(Lcom/lge/ims/server/ims/telephony/TelephonyCallState;)Z'
++    i = s.find(sig)
++    if i < 0 or 'ITelephonyRegistry;->notifyCallState' not in s[i:s.find('.end method', i)]:
++        return False
++    end = s.find('.end method', i) + len('.end method')
++    body = (sig + '\n    .registers 7\n    .param p0, "callState"    # Lcom/lge/ims/server/ims/telephony/TelephonyCallState;\n'
++            '    const/4 v0, 0x1\n    return v0\n.end method')
++    s = s[:i] + body + s[end:]
++    open(f, 'w').write(s); return True
++
++def main():
++    root = sys.argv[1]
++    for name, fn in [('PhoneStateListenerEx.mSubId', fix_phonestatelistener_subid),
++                     ('TelephonyCallStateRegistry.notify', noop_telephony_registry_notify)]:
++        print(f'   smali-fixup {name}: {"applied" if fn(root) else "skip/already"}')
++
++if __name__ == '__main__':
++    main()

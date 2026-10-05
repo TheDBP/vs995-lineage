@@ -24,7 +24,6 @@ This kernel has no PSI (no kernel/sched/psi.c), but it does ship
 drivers/staging/android/lowmemorykiller.c. With the module built in,
 lmkd finds /sys/module/lowmemorykiller/parameters/minfree, switches to
 its in-kernel interface and never touches PSI or memcg.
-
 ---
  arch/arm64/configs/vendor/lge/lge_msm8996_defconfig | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

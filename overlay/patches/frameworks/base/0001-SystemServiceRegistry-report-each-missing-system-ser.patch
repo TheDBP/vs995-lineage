@@ -28,7 +28,6 @@ and init rebooted after the fourth zygote death. Every boot.
 Report each distinct missing service once and log a warning thereafter.
 The first occurrence still gets the full wtf with its stack, so nothing
 that made this diagnosable is lost.
-
 ---
  .../android/app/SystemServiceRegistry.java    | 20 ++++++++++++++++++-
  1 file changed, 19 insertions(+), 1 deletion(-)
