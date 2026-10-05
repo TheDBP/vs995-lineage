@@ -363,3 +363,98 @@ PLT-to-symbol map, `qmi/{set_modem_info,set_lg_ims_reg_state,raw_cmd}.dis`,
 q6zip image @VA 0xd0000000 + `q6.dis`, `modem-uncomp.dis`, `modem-map.py`/
 `msgconst.py`/`strref.py` xref helpers), `.scratch/kdz/vs995/parts/
 system.image`.
+
+## Build plan: the full voice-IMS stack (adapted from the Robin bridge)
+
+The Robin (`ether-20.0`, QTI IMS on A13) proves the architecture; this is the
+LG/A17 adaptation. Data flow (works on the Robin, HD VoLTE both ways):
+
+```
+A17 telephony (ImsPhone, ImsResolver)
+  -> android.telephony.ims.*                              (modern ImsService API)
+  -> ImsServiceControllerCompat + MmTelFeatureCompatAdapter  (AOSP's own pre-P compat layer)
+  -> android.telephony.ims.compat.*
+  -> ImsBridge (our android_app)                          <- the bridge
+  -> com.android.ims.internal.IImsService (legacy 7.0 Binder, renamed)
+  -> Ims4 (LG app, registers ServiceManager "ims")
+  -> libims/libimsmmpf (LG SIP stack) -> LG qcril QMI -> modem
+```
+
+Verified on this A17 tree (build 20):
+- **Compat layer present** (the #1 risk, cleared): `frameworks/base/telephony/
+  java/android/telephony/ims/compat/{ImsService,feature/MMTelFeature,...}.java`
+  (base classes the bridge extends) + `frameworks/opt/telephony/.../ims/
+  {ImsServiceControllerCompat,MmTelFeatureCompatAdapter}.java` (framework side).
+  Bridge binds via `ImsService.SERVICE_INTERFACE` = action
+  `android.telephony.ims.compat.ImsService`.
+- **Ims4 publishes the same way as Robin's QTI app**: `ImsSystemServiceImpl.
+  smali:269-273` does `ServiceManager.addService("ims", binder)` where the
+  binder extends `com.android.ims.internal.IImsService$Stub`. Bridge uses
+  `ServiceManager.waitForService("ims")` + `IImsService.Stub.asInterface`.
+
+Where LG is harder than the Robin's QTI (QTI's ims.apk was self-contained; LG
+split code into framework jars):
+- Ims4 references `com.android.ims.internal.*` (ImsService/parcelables, removed
+  since P) **and** `com.lge.ims.common.*` (ImsLog, MessageExecutor, ...) which
+  live in LG's **boot framework jar `boot-ims-common`** (have `.oat` +
+  carved `.0.dex` in `.scratch/ims4/`), not in the APK. So the port needs an
+  LG-framework-jar port, not just an app rename.
+- LG's SIP stack is `libims`/`libimsmmpf` loaded by the app (no QTI
+  imsqmidaemon/imsdatadaemon/ims_rtp_daemon). The native load is already
+  solved (see "Inert load"): one `libimscompat.so` + real stock QMI/uuid blobs.
+
+### Build components (each a patch/module; flash together)
+
+1. **Native libs + load shims.** Install LG `libims/libimsmmpf/libimswms` + the
+   real stock deps (libext2_uuid, libqmi*, libvss_ims_qcci, libidl, libsmemlog,
+   libmdmdetect, libdsutils) via proprietary-files.txt -> vendor tree ->
+   PRODUCT_PACKAGES. Build one `libimscompat.so` (String8::getPathLeaf +
+   strndup16to8 real; the 6 mmpf video syms + OMX_Init/Deinit/Get/FreeHandle as
+   load-only stubs). Wire via `overlay/blob-fixups`: libims/libimsmmpf
+   `add-needed libimscompat.so` + `remove-needed` the dead video DT_NEEDED
+   (libsurfaceflinger, libOmx*, libstagefrighthw, libc2dcolorconvert). Make
+   `AudioSystem::setParameters` real before audio (only on-path stub). Robin
+   used `TARGET_LD_SHIM_LIBS` for the inject; blob-fixups add-needed is the
+   forge's equivalent -- verify it beats the namespace, see item 2.
+2. **Namespace** (the open problem the Robin dodged via /vendor app). libims
+   pulls libgui/libbinder/libandroid_runtime -- not in any app classloader
+   namespace's exposed set, and the extended-public-libraries file requires
+   `lib*.<company>.so` names so it can't expose them. Candidates, in order of
+   cleanliness to try: (a) run the stack where the default/system namespace
+   applies; (b) add the needed system libs to the base
+   `/system/etc/public.libraries.txt` (no name constraint there) -- global but
+   works; (c) lower Ims4 targetSdk 24->23 to hit the bionic greylist for old
+   apps (verify the greylist still covers libgui/libbinder on A17). Settle
+   empirically post-flash.
+3. **Port `boot-ims-common`** (LG framework jar): oat-to-smali the carved dex,
+   rename `com.android.ims.*` -> a legacy package (e.g. `com.lge.ims.legacy`),
+   ship as a system jar on the boot/system classpath (or fold into the app).
+4. **Rebuild Ims4**: deodex, rename `com.android.ims.*` refs to match item 3,
+   keep `com.lge.ims.*` and the broadcast action strings, re-sign with the
+   platform key (sharedUserId `android.uid.phone` must match the framework
+   signer -- key at `/media/Storage/Coding/keys/rom`). Install as priv-app.
+5. **ImsBridge app** (`android_app`, platform cert, privileged,
+   sharedUserId android.uid.phone): manifest `<service>` with intent-filter
+   `android.telephony.ims.compat.ImsService` + `MMTEL_FEATURE` meta +
+   BIND_IMS_SERVICE; extends `android.telephony.ims.compat.ImsService`,
+   `onCreateMMTelImsFeature` -> `LegacyMMTelFeature` that `waitForService("ims")`
+   then `setFeatureState(READY)` and `open(slot, SERVICE_CLASS_MMTEL, ...)`.
+   AIDL under `com.android.ims.internal.legacy` regenerated by
+   `ether-20.0/gen-legacy-aidl.py` **against LG's deodexed Ims4 smali** (LG's
+   transaction order, not the Robin's). LG `IImsService` is the 7.0 shape (15
+   txns, no `addRegistrationListener`) -- see "Binder surface" above.
+6. **Point telephony at the bridge**: overlay `config_ims_mmtel_package` =
+   bridge package; add `android.hardware.telephony.ims.prebuilt.xml` (without
+   the feature PhoneGlobals never builds an ImsResolver).
+7. **sepolicy** (A17 strict): domains for the IMS app process (`com.lge.ims`,
+   phone uid) + the libs' socket/QMI access; expect to author, not delta.
+8. **Behavioral**: `config_device_volte_available` under the **SIM's** MCC/MNC
+   qualifier (not the serving network's); the IMS APN for the carrier; the
+   Robin's `ro.telephony.block_binder_thread_on_incoming_calls=false`
+   equivalent; CarrierConfig IMS flags.
+
+Robin reference patches (ether-20.0 VOLTE-BRINGUP.md): device 0018-0029,
+hardware/ril 0001, vendor/apn 0001. Robin shim sources: `libshims/
+vtsurface_shim.cpp`, `nanopb-0.2.8/`. Re-run `abi-gap.sh` per blob on A17 (the
+nanopb delta and Surface sizeof will differ or not apply -- LG's stack differs
+from QTI's).
