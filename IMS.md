@@ -459,6 +459,53 @@ vtsurface_shim.cpp`, `nanopb-0.2.8/`. Re-run `abi-gap.sh` per blob on A17 (the
 nanopb delta and Surface sizeof will differ or not apply -- LG's stack differs
 from QTI's).
 
+## Flash A status (2026-10-05): com.lge.ims runs and registers "ims"
+
+Verified on device (pushed artifacts, then banked as patches 0029-0031):
+`com.lge.ims` stable (no native/Java crash through a 90 s soak), native engine
+up (SystemInterface/PlatformInterface traffic, DCNAgent rat=LTE, PhoneStateAgent
+IN_SERVICE), `service check ims` -> found (`com.lge.imslegacy.internal.IImsService`).
+
+Fixes it took, in order hit:
+- **Parcel ABI**: libims stack-allocates `android::Parcel` at the 2016 size (52 B);
+  A17's ctor smashes the frame (`__stack_chk_fail` in `GetImsFeatures`). Fixed by
+  symbol interposition in `libimscompat` (first DT_NEEDED): `{MAGIC, real*}`
+  wrapper + heap real Parcel, every imported Parcel method forwards;
+  `BBinder::transact/onTransact` unwrap. BBinder itself is still 16 B on 32-bit
+  and the IBinder/BBinder vtable order is unchanged 7.0->17 -- no shim needed.
+- **`dlsym(RTLD_NEXT)` returns NULL in an app namespace** (all libs RTLD_LOCAL);
+  resolve real libbinder symbols from `dlopen("libbinder.so")`. A null-guarded
+  resolver turns this into a pc=0 SIGSEGV one frame below the real caller
+  (debuggerd frame N>0 pc = return addr - 4, so "+42" names the *call*).
+- **Collision rename**: bundled libs whose name exists in /system/lib (libssl,
+  libcrypto, ...) are shadowed by the system copy; rename to `*_lgeims.so` and
+  rewrite DT_NEEDED (`build-ims4.sh`).
+- **`com.lge.server.ims` feature**: `SystemServiceManager` only runs
+  `ImsSystemServiceImpl.start()` (the `addService("ims")`) when
+  `hasSystemFeature("com.lge.server.ims")`; stock declares it in
+  `/system/etc/permissions/com.lge.server.ims.xml`. Shipped as
+  `ims/lge-ims-features.xml`. Other gates it then passes: `ImsGlobal.
+  isVolteEnabled` ("ims-frw-config", satisfied by `persist.dbg.volte_avail_ovr=1`
+  during bringup), operator list VZW/ATT/TMO-US/... or `getEnablerType()=="global"`.
+- Verify stubs (`gen-verify-stubs.py`) for LG framework classes incl.
+  `com.android.lge.lgsvcitems.LgSvcCmd`.
+
+Open, next:
+- **`lgeims_mmpf` not published** (libims polls every 5 s). It is LG's media
+  engine (RTP, AMR/EVS, vocoder -- `AudioAdaptor` needs it, so VOICE needs it).
+  `android::MMPFService::instantiate()` is in libimsmmpf.so (already loaded in
+  com.lge.ims); on stock the persistent `com.lge.imsvt` process calls it from
+  libimsvtjni's JNI_OnLoad. Plan: host in-process -- JNI entry in libimscompat
+  that dlsym's `_ZN7android11MMPFService11instantiateEv`, smali hook after
+  `loadLibrary("ims")`.
+- QMI `svc_id 703` (0x2bf, LG `lge_ims`) TXN send errors / `qmi_client_
+  register_error_cb` -- modem side of the hook (see above section); check
+  `/dev/smd*`/qmuxd access under radio once sepolicy is tightened.
+- sepolicy: radio is permissive on the bringup build; denials seen so far:
+  `net.ims.operator` set (system_prop), find `lgeims_mmpf`/`com.lge.ims.phone`
+  (default_android_service -> needs service_contexts entries), raw socket
+  create/ioctl 0xc304 (QMI).
+
 ## RCS: what to revisit after voice works (notes, not yet attempted)
 
 Flash A/B target voice VoLTE only. RCS (messaging, presence, enriched calling)
