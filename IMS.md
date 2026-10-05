@@ -458,3 +458,48 @@ hardware/ril 0001, vendor/apn 0001. Robin shim sources: `libshims/
 vtsurface_shim.cpp`, `nanopb-0.2.8/`. Re-run `abi-gap.sh` per blob on A17 (the
 nanopb delta and Surface sizeof will differ or not apply -- LG's stack differs
 from QTI's).
+
+## RCS: what to revisit after voice works (notes, not yet attempted)
+
+Flash A/B target voice VoLTE only. RCS (messaging, presence, enriched calling)
+is deferred but the surface is mapped so it is not rediscovered later.
+
+What RCS adds on top of the voice stack:
+- **Ims4 already carries the RCS code** (no extra app): `com.lge.ims.rcs`,
+  `com.lge.ims.service.rcs`, `com.lge.ims.service.eab` (EAB = presence/enhanced
+  address book), `com.lge.ims.volte.provider.eab`. These are in the APK, so once
+  Ims4 runs they are present -- RCS is a configuration/wiring problem, not a
+  second port.
+- **UCE legacy classes** (User Capability Exchange = the presence/options SIP
+  layer): `com.android.ims.internal.uce.*` -- 58 classes in smali-fw
+  (presence: PresCapInfo/PresRlmiInfo/PresTupleInfo/IPresenceService/
+  IPresenceListener; options: OptionsCapInfo/IOptionsService; common: CapInfo/
+  StatusCode/UceLong; uceservice: ImsUceManager/IUceService/IUceListener/
+  UceServiceBase). All quickened -- for voice they are **stubbed** (category D).
+  For RCS they must be made real: regenerate the `IUceService`/`IOptionsService`/
+  `IPresenceService` + listeners via gen-legacy-aidl (same path as the voice
+  interfaces), and provide the UCE parcelables (CapInfo, PresCapInfo, ...) real
+  rather than stubbed.
+- **The LG parcelables stubbed for voice become load-bearing for RCS**:
+  LGImsDialog/LGImsDialogState (conference/dialog state), LGImsDevice/
+  LGImsDeviceInfo (device management), LGImsIcbInfo. Un-stub them (deodex from
+  the right source or reconstruct).
+- **Shared lib**: `com.verizon.ims.jar` (/system/framework, VZW RCS) -- a
+  uses-library Ims4 may need on Verizon; port like boot-ims-common if so.
+- **Bridge**: AOSP's modern RCS path is `config_ims_rcs_package` +
+  `android.telephony.ims.RcsFeature` / the compat `RcsFeature`
+  (`frameworks/base/.../compat/feature/RcsFeature.java` exists on A17). The
+  Robin bridge did **not** wire RCS (MMTEL only -- it set only
+  `config_ims_mmtel_package`). For RCS, add an `onCreateRcsFeature` to the
+  bridge returning a LegacyRcsFeature that talks to Ims4's UCE binder, and set
+  `config_ims_rcs_package`.
+- **Config**: RCS provisioning (autoconfig/ACS), the `com.lge.ims.rcs.*`
+  broadcast actions (CONFIG_STATE, STARTER, enrichedcall.*, rcsim.*) must not be
+  renamed (wire contracts, like the voice IMS_SERVICE_UP actions), carrier
+  CarrierConfig RCS keys, and an RCS APN if the carrier separates it.
+- **Modem**: the SIP stack is the same libims; RCS rides the same IMS PDN, so no
+  new modem hook beyond what voice needs.
+
+Order when resuming: voice end-to-end first, then un-stub UCE + LG dialog/device
+parcelables, regenerate the UCE AIDL, add the RcsFeature to the bridge, wire
+config_ims_rcs_package, then provisioning.
