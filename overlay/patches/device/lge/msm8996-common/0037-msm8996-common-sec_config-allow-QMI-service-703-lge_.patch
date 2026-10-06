@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 06:45:22 -0400
+Subject: [PATCH] msm8996-common: sec_config: allow QMI service 703 (lge_ims)
+
+VoLTE audio on this device runs on the modem, not through AudioTrack: MMPF
+creates a media session on the modem and hands it the IMS PDN address, both
+over LG's private QMI service 703 (0x2bf). Every send failed --
+
+  IPC_RTR: msm_ipc_router_send_to: permission failure for Framework
+  [mmpf_cpif_send_msg] send_msg_sync error: -16
+  AudioAdaptor::GetIPAddrOfCP() Error[21]
+
+-- because sec_config grants IPC-router access to services 1-511, 704 and
+4097 but not 703, and the router denies a rule-less service to everything but
+root while com.lge.ims runs as radio. Without the modem media session there is
+no RTP, so the framework's 5s RTP-inactivity threshold tore down every
+answered call after ~20s and Ims4 then dropped registration.
+
+With the rule, GetIPAddrOfCP returns the address and the audio media session
+reaches LIVE. Note the rule must be programmed before the modem registers the
+service -- running irsc_util by hand after boot changes nothing, which is why
+this belongs in the file init.qcom.rc already feeds it.
+
+---
+ configs/permissions/sec_config | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/configs/permissions/sec_config b/configs/permissions/sec_config
+index b6eed59c..87054844 100644
+--- a/configs/permissions/sec_config
++++ b/configs/permissions/sec_config
+@@ -327,3 +327,12 @@
+ 57:4294967295:1000
+ /* Allow VSS GNSS service to be used by system and net_raw processes */
+ 704:4294967295:1000:3004
++/* LG lge_ims (QMI service 703 / 0x2bf): com.lge.ims needs it for the modem-side media
++   session that actually carries VoLTE audio -- MMPF_CP_IF::createMediaSession tunnels
++   msg 0x060c over it, and AudioAdaptor::GetIPAddrOfCP asks the modem for the IMS PDN
++   address the same way. LG shipped rules for 1-511, 704 and 4097 and omitted this one,
++   so the MSM IPC router denied every send (IPC_RTR: msm_ipc_router_send_to: permission
++   failure) to anything but root: no modem media session, no RTP, and the framework's
++   RTP-inactivity timer killed each answered call after ~20s. The rule has to exist before
++   the modem registers the service, which is why irsc_util runs from init.qcom.rc. */
++703:4294967295:1000:1001:3004

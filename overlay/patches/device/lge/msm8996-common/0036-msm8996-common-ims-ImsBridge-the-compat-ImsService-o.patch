@@ -34,8 +34,8 @@ never constructs an ImsResolver), config_ims_mmtel_package, and
 ro.telephony.block_binder_thread_on_incoming_calls=false.
 
 ---
- ims/bridge/Android.bp                         |  38 +++
- ims/bridge/AndroidManifest.xml                |  40 +++
+ ims/bridge/Android.bp                         |  38 ++
+ ims/bridge/AndroidManifest.xml                |  43 +++
  ims/bridge/aidl/android/view/Surface.aidl     |   9 +
  .../com/lge/imslegacy/ImsCallForwardInfo.aidl |   2 +
  .../com/lge/imslegacy/ImsCallProfile.aidl     |   2 +
@@ -56,7 +56,7 @@ ro.telephony.block_binder_thread_on_incoming_calls=false.
  .../lge/imslegacy/internal/IImsService.aidl   |  37 ++
  .../com/lge/imslegacy/internal/IImsUt.aidl    |  32 ++
  .../imslegacy/internal/IImsUtListener.aidl    |  24 ++
- .../internal/IImsVideoCallCallback.aidl       |  20 ++
+ .../internal/IImsVideoCallCallback.aidl       |  20 +
  .../internal/IImsVideoCallProvider.aidl       |  27 ++
  .../com/lge/imslegacy/ImsCallForwardInfo.java |  49 +++
  .../src/com/lge/imslegacy/ImsCallProfile.java |  64 ++++
@@ -65,20 +65,21 @@ ro.telephony.block_binder_thread_on_incoming_calls=false.
  .../src/com/lge/imslegacy/ImsSsInfo.java      |  33 ++
  .../lge/imslegacy/ImsStreamMediaProfile.java  |  41 +++
  .../imslegacy/ImsSuppServiceNotification.java |  54 +++
- .../bridge/CallSessionListenerAdapter.java    | 216 ++++++++++++
+ .../bridge/CallSessionListenerAdapter.java    | 221 +++++++++++
  .../ims/bridge/CallSessionWrapper.java        | 202 +++++++++++
- .../lineageos/ims/bridge/ConfigWrapper.java   | 166 +++++++++
- .../src/org/lineageos/ims/bridge/Convert.java |  95 ++++++
+ .../lineageos/ims/bridge/ConfigWrapper.java   | 185 ++++++++++
+ .../src/org/lineageos/ims/bridge/Convert.java |  95 +++++
  .../org/lineageos/ims/bridge/EcbmWrapper.java |  51 +++
- .../ims/bridge/ImsBridgeService.java          |  31 ++
- .../ims/bridge/LegacyMMTelFeature.java        | 321 ++++++++++++++++++
+ .../ims/bridge/ImsBridgeService.java          |  37 ++
+ .../ims/bridge/LegacyMMTelFeature.java        | 342 ++++++++++++++++++
+ .../ims/bridge/ModemVoiceSession.java         |  68 ++++
  .../ims/bridge/MultiEndpointWrapper.java      |  61 ++++
- .../bridge/RegistrationListenerAdapter.java   | 173 ++++++++++
+ .../bridge/RegistrationListenerAdapter.java   | 199 ++++++++++
  .../org/lineageos/ims/bridge/UtWrapper.java   | 121 +++++++
  ims/build-ims4.sh                             |  37 +-
  ims/ims.mk                                    |  13 +
  .../services/Telephony/res/values/config.xml  |   2 +-
- 44 files changed, 2279 insertions(+), 4 deletions(-)
+ 45 files changed, 2427 insertions(+), 4 deletions(-)
  create mode 100644 ims/bridge/Android.bp
  create mode 100644 ims/bridge/AndroidManifest.xml
  create mode 100644 ims/bridge/aidl/android/view/Surface.aidl
@@ -117,6 +118,7 @@ ro.telephony.block_binder_thread_on_incoming_calls=false.
  create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/EcbmWrapper.java
  create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/ImsBridgeService.java
  create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
+ create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/ModemVoiceSession.java
  create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/MultiEndpointWrapper.java
  create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/RegistrationListenerAdapter.java
  create mode 100644 ims/bridge/src/org/lineageos/ims/bridge/UtWrapper.java
@@ -167,10 +169,10 @@ index 00000000..6e60a0c9
 +}
 diff --git a/ims/bridge/AndroidManifest.xml b/ims/bridge/AndroidManifest.xml
 new file mode 100644
-index 00000000..ba13a602
+index 00000000..9c6287bc
 --- /dev/null
 +++ b/ims/bridge/AndroidManifest.xml
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,43 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<manifest xmlns:android="http://schemas.android.com/apk/res/android"
 +    package="org.lineageos.ims.bridge"
@@ -188,6 +190,9 @@ index 00000000..ba13a602
 +      in the device tree, together.
 +    -->
 +    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
++    <!-- normal permission; needed for AudioManager.setParameters to open the modem
++         voice path on an IMS call (see ModemVoiceSession). -->
++    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 +
 +    <application
 +        android:label="IMS Bridge"
@@ -1103,10 +1108,10 @@ index 00000000..f2d5168d
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/CallSessionListenerAdapter.java b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionListenerAdapter.java
 new file mode 100644
-index 00000000..973e5a61
+index 00000000..58dcfd62
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionListenerAdapter.java
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,221 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.os.RemoteException;
@@ -1162,16 +1167,21 @@ index 00000000..973e5a61
 +
 +    @Override
 +    public void callSessionStarted(IImsCallSession s, ImsCallProfile p) throws RemoteException {
++        // The modem carries the voice media; the audio HAL only opens the path once it is
++        // told the session is active. See ModemVoiceSession.
++        ModemVoiceSession.setActive(true);
 +        mTarget.callSessionStarted(modern(s), Convert.toModern(p));
 +    }
 +
 +    @Override
 +    public void callSessionStartFailed(IImsCallSession s, ImsReasonInfo r) throws RemoteException {
++        ModemVoiceSession.setActive(false);
 +        mTarget.callSessionStartFailed(modern(s), Convert.toModern(r));
 +    }
 +
 +    @Override
 +    public void callSessionTerminated(IImsCallSession s, ImsReasonInfo r) throws RemoteException {
++        ModemVoiceSession.setActive(false);
 +        mTarget.callSessionTerminated(modern(s), Convert.toModern(r));
 +    }
 +
@@ -1533,10 +1543,10 @@ index 00000000..eff98bb0
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/ConfigWrapper.java b/ims/bridge/src/org/lineageos/ims/bridge/ConfigWrapper.java
 new file mode 100644
-index 00000000..eff49255
+index 00000000..739eacb2
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/ConfigWrapper.java
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,185 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.os.RemoteException;
@@ -1650,6 +1660,25 @@ index 00000000..eff49255
 +    public void setFeatureValue(int feature, int network, int value,
 +            com.android.ims.ImsConfigListener listener) throws RemoteException {
 +        mLegacy.setFeatureValue(feature, network, value, wrap(listener));
++        // Ims4 accepts the value but never calls the listener back, and the framework's
++        // changeEnabledCapabilities() waits on a 2 s CountDownLatch per capability. One switch in
++        // SIM settings pushes about ten capability changes, i.e. ~20 s of blocked binder threads --
++        // enough to ANR Settings (seen 2026-10-05) and to collide with call setup. Acknowledge the
++        // value we were asked to set, with the same feature/network or the framework discards it
++        // as "response different than requested" and waits out the latch anyway.
++        //
++        // This does not fake a capability: what decides whether a call may use IMS is the
++        // registration feature bitmap, and Ims4 keeps its own feature state regardless of this
++        // call. If Ims4 ever does answer, the latch is already released and the late callback is
++        // a no-op.
++        if (listener != null) {
++            try {
++                listener.onSetFeatureResponse(feature, network, value,
++                        com.android.ims.ImsConfig.OperationStatusConstants.SUCCESS);
++            } catch (RemoteException e) {
++                Log.w(TAG, "synthesized setFeatureValue ack failed", e);
++            }
++        }
 +    }
 +
 +    @Override
@@ -1863,10 +1892,10 @@ index 00000000..15f52055
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/ImsBridgeService.java b/ims/bridge/src/org/lineageos/ims/bridge/ImsBridgeService.java
 new file mode 100644
-index 00000000..4a6ea43f
+index 00000000..b7c23b98
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/ImsBridgeService.java
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,37 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.telephony.ims.compat.ImsService;
@@ -1887,6 +1916,12 @@ index 00000000..4a6ea43f
 +    static final String TAG = "ImsBridge";
 +
 +    @Override
++    public void onCreate() {
++        super.onCreate();
++        ModemVoiceSession.init(this);
++    }
++
++    @Override
 +    public MMTelFeature onCreateMMTelImsFeature(int slotId) {
 +        Log.i(TAG, "onCreateMMTelImsFeature slot=" + slotId);
 +        return new LegacyMMTelFeature(slotId);
@@ -1900,10 +1935,10 @@ index 00000000..4a6ea43f
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java b/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
 new file mode 100644
-index 00000000..c77a0275
+index 00000000..73341664
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,342 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.app.PendingIntent;
@@ -2016,6 +2051,11 @@ index 00000000..c77a0275
 +            Log.i(TAG, "slot " + mSlotId + ": legacy session open, serviceId=" + mServiceId);
 +            // State is published by awaitLegacyService(); the framework only reaches this method
 +            // because the feature already reported READY.
++            // Probe now in case Ims4 is already registered, and again if/when it becomes
++            // registered: it registers tens of seconds after the framework opens the session, and
++            // it only emits a feature bitmap on a UC state change, so the open()-time probe alone
++            // always runs while registration is still disconnected and gives up.
++            mRegistration.setOnConnected(this::probeFeatureBitmapIfMissing);
 +            probeFeatureBitmapIfMissing();
 +            return mServiceId;
 +        } catch (RemoteException e) {
@@ -2032,11 +2072,27 @@ index 00000000..c77a0275
 +     * over LTE, 4 = video. (Legacy 6-slot convention: slot i holds feature i or -1.)
 +     */
 +    private void probeFeatureBitmapIfMissing() {
-+        if (!mRegistration.isConnected() || mRegistration.hasFeatureBitmap()) return;
++        if (!mRegistration.isConnected() || mRegistration.hasFeatureBitmap()) {
++            Log.i(TAG, "slot " + mSlotId + ": bitmap probe skipped (connected="
++                    + mRegistration.isConnected() + " haveBitmap="
++                    + mRegistration.hasFeatureBitmap() + ")");
++            return;
++        }
 +        try {
 +            IImsService s = legacy();
-+            boolean voice = s.isConnected(mServiceId, 1 /* SERVICE_TYPE_NORMAL */, 2 /* VOICE */);
-+            boolean video = s.isConnected(mServiceId, 1, 4 /* VT */);
++            // isConnected(NORMAL, 0) is UCStateTracker.isRegistered(); isConnected(NORMAL, VOICE)
++            // additionally demands isVoiceCallSupported() && isVoiceCallRegistered(), LG UC-layer
++            // flags fed by provisioning this stack will not let us write (setProvisionedValue is
++            // refused, rc=1). On this device those flags stay false while MMTEL is registered and
++            // voice calls demonstrably work, so registration is the ground truth and the VOICE
++            // probe is only an additional yes-vote, never a veto.
++            boolean registered = s.isConnected(mServiceId, 1 /* SERVICE_TYPE_NORMAL */, 0);
++            boolean voice = registered
++                    || s.isConnected(mServiceId, 1, 2 /* CALL_TYPE_VOICE */);
++            // Do not advertise video. Ims4's VT needs the MMPF media path, whose modem-side
++            // address query fails here (see IMS.md), so offering it would just produce calls that
++            // cannot carry media. isConnected(NORMAL, 4) answers true regardless.
++            boolean video = false;
 +            int[] enabled = {-1, -1, -1, -1, -1, -1};
 +            int[] disabled = {-1, -1, -1, -1, -1, -1};
 +            // The array is indexed BY legacy feature id and the value must equal the index;
@@ -2050,8 +2106,8 @@ index 00000000..c77a0275
 +            disabled[3] = 3;
 +            disabled[4] = 4;                       // UT goes over the Ut interface, not a feature
 +            disabled[5] = 5;
-+            Log.i(TAG, "slot " + mSlotId + ": no feature bitmap from Ims4 after open; probed voice="
-+                    + voice + " video=" + video);
++            Log.i(TAG, "slot " + mSlotId + ": synthesizing feature bitmap; registered="
++                    + registered + " voice=" + voice + " video=" + video);
 +            mRegistration.registrationFeatureCapabilityChanged(SERVICE_CLASS_MMTEL, enabled,
 +                    disabled);
 +        } catch (RemoteException e) {
@@ -2225,6 +2281,80 @@ index 00000000..c77a0275
 +        }
 +    }
 +}
+diff --git a/ims/bridge/src/org/lineageos/ims/bridge/ModemVoiceSession.java b/ims/bridge/src/org/lineageos/ims/bridge/ModemVoiceSession.java
+new file mode 100644
+index 00000000..4de9eb37
+--- /dev/null
++++ b/ims/bridge/src/org/lineageos/ims/bridge/ModemVoiceSession.java
+@@ -0,0 +1,68 @@
++// Copyright (C) 2026 The LineageOS Project
++// SPDX-License-Identifier: Apache-2.0
++
++package org.lineageos.ims.bridge;
++
++import android.content.Context;
++import android.media.AudioManager;
++import android.util.Log;
++
++/**
++ * Tells the audio HAL when the modem's voice session is active, so a VoLTE call is audible.
++ *
++ * On this SoC the voice media of an IMS call is carried by the MODEM, not by an AudioTrack: the OEM
++ * media stack creates a session on the modem (MMPF_CP_IF::createMediaSession over QMI) and the HAL
++ * has to open its matching voice path to wire the earpiece and mic to it. The HAL does that in
++ * voice_extn_set_parameters() -> update_call_states() when it is handed
++ * {@code vsid=<id>;call_state=<state>}, and NOTHING in AOSP ever sends that -- on a QTI device the
++ * vendor IMS app does it, and on stock this was the OEM's own telephony framework, which a port
++ * replaces with AOSP. Miss it and a call sets up perfectly, RTP flows, the call stays up, and you
++ * hear silence in both directions: the only symptom is the absence of a voice-call usecase in the
++ * HAL log while the audio mode is already MODE_IN_CALL.
++ *
++ * Values come from the audio HAL, not from a public API: VOICEMMODE1_VSID and CALL_INACTIVE/ACTIVE
++ * in hardware/qcom-caf/msm8996/audio/hal (voice_extn.c, voice.h). The modem confirms which session
++ * it picked -- MMPF logs {@code setAudioCalInfoParam[vsid=...]} -- so check that matches if audio is
++ * ever silent again after a modem or HAL change.
++ */
++final class ModemVoiceSession {
++    private static final String TAG = ImsBridgeService.TAG;
++
++    /** VOICEMMODE1_VSID: the multi-mode session the modem uses for VoLTE. */
++    private static final int VSID = 0x11C05000;
++    /** voice.h: BASE_CALL_STATE is 1, CALL_ACTIVE is BASE + 1. */
++    private static final int CALL_INACTIVE = 1;
++    private static final int CALL_ACTIVE = 2;
++
++    private static Context sContext;
++    private static int sState = CALL_INACTIVE;
++
++    private ModemVoiceSession() { }
++
++    static void init(Context context) {
++        sContext = context;
++    }
++
++    /** Call with true once a call session is established, false once it ends or fails to start. */
++    static void setActive(boolean active) {
++        final int state = active ? CALL_ACTIVE : CALL_INACTIVE;
++        synchronized (ModemVoiceSession.class) {
++            if (sState == state) return;
++            sState = state;
++        }
++        final Context context = sContext;
++        if (context == null) {
++            Log.w(TAG, "modem voice session: no context yet, cannot set state " + state);
++            return;
++        }
++        final AudioManager am = context.getSystemService(AudioManager.class);
++        if (am == null) {
++            Log.w(TAG, "modem voice session: no AudioManager");
++            return;
++        }
++        // Decimal: the HAL reads both keys with str_parms_get_int, which parses base 10.
++        final String params = "vsid=" + VSID + ";call_state=" + state;
++        Log.i(TAG, "modem voice session -> " + params);
++        am.setParameters(params);
++    }
++}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/MultiEndpointWrapper.java b/ims/bridge/src/org/lineageos/ims/bridge/MultiEndpointWrapper.java
 new file mode 100644
 index 00000000..157cde80
@@ -2294,14 +2424,15 @@ index 00000000..157cde80
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/RegistrationListenerAdapter.java b/ims/bridge/src/org/lineageos/ims/bridge/RegistrationListenerAdapter.java
 new file mode 100644
-index 00000000..08c70391
+index 00000000..5769ca40
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/RegistrationListenerAdapter.java
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,199 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.net.Uri;
 +import android.os.RemoteException;
++import static android.telephony.ServiceState.RIL_RADIO_TECHNOLOGY_LTE;
 +import android.util.Log;
 +
 +import com.lge.imslegacy.ImsReasonInfo;
@@ -2340,6 +2471,16 @@ index 00000000..08c70391
 +    private int[] mEnabledFeatures;
 +    private int[] mDisabledFeatures;
 +    private Uri[] mUris;
++
++    /**
++     * Run when registration transitions to connected. The feature uses it to probe the capability
++     * bitmap: Ims4 emits registrationFeatureCapabilityChanged only on a UC state CHANGE, and it
++     * registers tens of seconds after the framework opens the session, so a probe done once at
++     * open() time always runs too early and leaves the framework with an empty capability set.
++     */
++    private Runnable mOnConnected;
++
++    void setOnConnected(Runnable r) { mOnConnected = r; }
 +
 +    void add(com.android.ims.internal.IImsRegistrationListener target) {
 +        if (target == null || mTargets.contains(target)) return;
@@ -2404,8 +2545,15 @@ index 00000000..08c70391
 +
 +    @Override
 +    public void registrationConnected() throws RemoteException {
-+        synchronized (this) { mRegState = 2; mRadioTech = -1; }
-+        fanOut("registrationConnected", t -> t.registrationConnected());
++        // Report LTE rather than passing the missing tech through. Ims4 says "connected" with no
++        // radio tech, which ImsRegistrationCompatAdapter maps to REGISTRATION_TECH_NONE -- and
++        // ImsPhoneCallTracker.isImsCapabilityInCacheAvailable() is
++        // `getImsRegistrationTech() == regTech && mMmTelCapabilities.isCapable(cap)`, with
++        // isVoiceOverCellularImsEnabled() only ever asking about REGISTRATION_TECH_LTE and _NR.
++        // So a tech-less registration makes the dial gate false and every call falls back to CS
++        // while IMS looks registered and VoLTE capability looks enabled. This stack only registers
++        // MMTEL over LTE; a tech Ims4 does give us is passed through untouched below.
++        registrationConnectedWithRadioTech(RIL_RADIO_TECHNOLOGY_LTE);
 +    }
 +
 +    @Override
@@ -2417,8 +2565,12 @@ index 00000000..08c70391
 +    @Override
 +    public void registrationConnectedWithRadioTech(int imsRadioTech) throws RemoteException {
 +        synchronized (this) { mRegState = 2; mRadioTech = imsRadioTech; }
++        Log.i(TAG, "registrationConnected radioTech=" + imsRadioTech + " (RIL tech, "
++                + RIL_RADIO_TECHNOLOGY_LTE + "=LTE) -> " + mTargets.size() + " listener(s)");
 +        fanOut("registrationConnectedWithRadioTech",
 +                t -> t.registrationConnectedWithRadioTech(imsRadioTech));
++        Runnable r = mOnConnected;
++        if (r != null) r.run();
 +    }
 +
 +    @Override
@@ -2431,6 +2583,7 @@ index 00000000..08c70391
 +    @Override
 +    public void registrationDisconnected(ImsReasonInfo info) throws RemoteException {
 +        synchronized (this) { mRegState = 3; mDisconnectReason = info; }
++        Log.i(TAG, "registrationDisconnected: " + info);
 +        android.telephony.ims.ImsReasonInfo modern = Convert.toModern(info);
 +        fanOut("registrationDisconnected", t -> t.registrationDisconnected(modern));
 +    }
@@ -2455,6 +2608,9 @@ index 00000000..08c70391
 +    @Override
 +    public void registrationFeatureCapabilityChanged(int serviceClass,
 +            int[] enabledFeatures, int[] disabledFeatures) throws RemoteException {
++        Log.i(TAG, "featureCapabilityChanged from Ims4: enabled="
++                + java.util.Arrays.toString(enabledFeatures) + " disabled="
++                + java.util.Arrays.toString(disabledFeatures));
 +        synchronized (this) { mEnabledFeatures = enabledFeatures; mDisabledFeatures = disabledFeatures; }
 +        fanOut("registrationFeatureCapabilityChanged", t -> t.registrationFeatureCapabilityChanged(
 +                serviceClass, enabledFeatures, disabledFeatures));

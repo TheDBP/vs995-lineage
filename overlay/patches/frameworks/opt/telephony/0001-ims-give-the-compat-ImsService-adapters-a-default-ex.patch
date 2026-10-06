@@ -33,7 +33,6 @@ CountDownLatch waits in changeEnabledCapabilities/queryCapabilityConfiguration
 
 Found bringing LG's Ims4 up on 24.0; the compat path has been deprecated
 since P and nothing in tree exercises it.
-
 ---
  .../ims/ImsServiceControllerCompat.java       | 26 +++++++++++++++++--
  1 file changed, 24 insertions(+), 2 deletions(-)
