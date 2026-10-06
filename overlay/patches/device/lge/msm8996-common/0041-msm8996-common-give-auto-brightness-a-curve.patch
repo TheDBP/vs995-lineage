@@ -13,7 +13,6 @@ A17 still honours these legacy arrays when no DisplayDeviceConfig exists.
 config_autoBrightnessLevels holds the lux thresholds and the first control
 point is implicit at 0 lux, so the backlight array carries exactly one more
 entry. Tuned by eye against the panel's 255 max, not measured in nits.
-
 ---
  .../base/core/res/res/values/config.xml       | 38 +++++++++++++++++++
  1 file changed, 38 insertions(+)

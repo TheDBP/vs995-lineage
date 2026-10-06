@@ -25,7 +25,6 @@ instead of leaving them to chance.
 
 No mcc/mnc filter on any of them: these are device limitations, not carrier
 ones. Re-enable per feature if any is ever made to work.
-
 ---
  .../CarrierConfigOverlay/res/xml/vendor.xml   | 19 +++++++++++++++++++
  vendor_prop.mk                                | 10 ++++++++++

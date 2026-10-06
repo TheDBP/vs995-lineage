@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Tue, 6 Oct 2026 12:35:36 -0400
+Date: Tue, 6 Oct 2026 15:49:07 -0400
 Subject: [PATCH] msm8996-common: ims: ImsBridge, the compat ImsService over
  LG's Ims4
 
@@ -76,10 +76,10 @@ ro.telephony.block_binder_thread_on_incoming_calls=false.
  .../ims/bridge/MultiEndpointWrapper.java      |  61 ++++
  .../bridge/RegistrationListenerAdapter.java   | 199 ++++++++++
  .../org/lineageos/ims/bridge/UtWrapper.java   | 121 ++++++
- ims/build-ims4.sh                             |  37 +-
+ ims/build-ims4.sh                             |  39 +-
  ims/ims.mk                                    |  13 +
  .../services/Telephony/res/values/config.xml  |   2 +-
- 45 files changed, 2455 insertions(+), 4 deletions(-)
+ 45 files changed, 2456 insertions(+), 5 deletions(-)
  create mode 100644 ims/bridge/Android.bp
  create mode 100644 ims/bridge/AndroidManifest.xml
  create mode 100644 ims/bridge/aidl/android/view/Surface.aidl
@@ -2783,10 +2783,10 @@ index 00000000..c0c472a8
 +    }
 +}
 diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
-index 33ec056e..66e60aed 100755
+index 33ec056e..c9280037 100755
 --- a/ims/build-ims4.sh
 +++ b/ims/build-ims4.sh
-@@ -8,9 +8,11 @@
+@@ -8,12 +8,14 @@
  #                 <stock-libs-dir> <out.apk> [<stock-bin-dir>]   (bin dir default: <stock-libs-dir>/../bin)
  #
  # Proprietary inputs (NOT committed -- stage them): the stock Ims4.apk, boot-ims-common.oat and a stock
@@ -2796,11 +2796,15 @@ index 33ec056e..66e60aed 100755
 +# system image (for the deodex boot classpath), a CLEAN framework deodex (deodex-jar.sh on the stock
 +# boot-framework.oat; it holds the com.android.ims AIDL interfaces AND the real parcelables, which are
 +# copied in -- quickened smali would not reassemble), and <stock-libs-dir> holding the 32-bit LG SIP
-+# libs + QMI deps (the 15 in LG_LIBS below). Committed here: iface-list.txt and legacy-java/
++# libs + QMI deps (those in LG_LIBS below). Committed here: iface-list.txt and legacy-java/
 +# (build-time parcelable stubs, replaced by the framework's real smali in step 3.5).
  # Generic steps use the forge tools; set FORGE to the forge dir.
  #
- # The 15 LG libs are bundled INTO the apk under lib/armeabi-v7a/ (patchelf-fixed: libims/libimsmmpf get
+-# The 15 LG libs are bundled INTO the apk under lib/armeabi-v7a/ (patchelf-fixed: libims/libimsmmpf get
++# The LG libs are bundled INTO the apk under lib/armeabi-v7a/ (patchelf-fixed: libims/libimsmmpf get
+ # add-needed libimscompat + the dead video DT_NEEDED removed). Bundling forces the com.lge.ims process
+ # 32-bit on zygote64_32 AND puts the libs in the app namespace's own permitted path, so only the
+ # framework libs (+ libimscompat) need public.libraries. libimscompat itself is a Soong cc_library in
 @@ -60,6 +62,19 @@ mkdir -p "$T/dex"; find "$T/classes" -name '*.class' > "$T/cls.txt"
  java -cp "$R8" com.android.tools.r8.D8 --min-api 21 --lib "$AJAR" --output "$T/dex" @"$T/cls.txt"
  java -jar "$BK" d "$T/dex/classes.dex" -o "$T/legacy-smali" >/dev/null

@@ -38,7 +38,7 @@ audio, back to back on one boot.
  create mode 100644 ims/smali-stubs.txt
 
 diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
-index 66e60aed..09c3b7da 100755
+index c9280037..063baf8b 100755
 --- a/ims/build-ims4.sh
 +++ b/ims/build-ims4.sh
 @@ -107,6 +107,9 @@ echo "   $nreal real parcelable classes from the stock framework"
