@@ -70,7 +70,7 @@ Three independent switches:
 
 | switch | what it adds | what it needs from you |
 |---|---|---|
-| **GApps** | Google Play Services and the Play Store | a GApps zip (set `GAPPS_URL`) |
+| **GApps** | Google Play Services and the Play Store | nothing — the URL is derived from the branch; `GAPPS_URL` only overrides it |
 | **OEM assets** | the manufacturer's boot animation, sounds and wallpapers | a stock ROM the forge already has a pack for — currently only the Nextbit Robin ([docs/OEM-ASSETS.md](docs/OEM-ASSETS.md)) |
 | **root** | a Magisk-patched boot image, plus a standalone `boot-magisk.img` | nothing |
 
@@ -110,6 +110,16 @@ dozen things we always add" would not be stock, and a stock image quietly carryi
 be a lie in its own filename. Asking for it with `EXTRA_OPTIONS` set prints a note saying it was
 ignored.
 
+Two things do reach it, and both are the device saying "this is not an extra, it is the phone
+working at all". `STOCK_OPTIONS` in `device.conf` names options stock still gets — without
+`setup-mobile-data` on the Robin, SetupWizard leaves mobile data off, and an image that cannot
+reach the network does not answer the question stock exists to answer. And on a device that builds
+VoLTE from stock firmware, `volte` turns itself on here as everywhere else. So "is this bug ours or
+upstream's?" is answered against upstream *plus those*. If you suspect one of them, empty
+`STOCK_OPTIONS` for the run, or move the stock firmware aside so `volte` reports itself off. An
+empty `OPTIONS=` will not do it: with no `PRESET` either, bootstrap falls back to the first preset
+rather than to nothing.
+
 Its value is answering one question quickly: **is this ours or upstream's?** A bug that reproduces
 on a stock build is LineageOS's; one that disappears is something we added, and the option list is
 then the search space. That is a single flash instead of an argument.
@@ -144,12 +154,12 @@ rather than one per cycle.
 ### 5. Find the result
 
 ```
-build_output/artifacts/<zip name>.zip   (+ -recovery.img, -boot.img, .sha256)
+build_output/artifacts/<zip name>.zip   (+ -recovery.img, -boot.img, -boot-magisk.img, .sha256)
 ```
 
 That copy survives the next build; the one in `build_output/src/out/target/product/<codename>/` is
-deleted by the next preset's installclean. If you enabled root you also get `boot-magisk.img` in
-`out/`.
+deleted by the next preset's installclean. If you enabled root, `boot-magisk.img` is kept there
+too, not only in `out/`.
 
 ### 6. Flash it
 
@@ -179,8 +189,12 @@ captured as patches. To keep a change permanently:
 ./forge/tools/refresh-patches.sh
 ```
 
-This walks the projects you have committed to and rewrites `overlay/patches/` to match. From then
-on, every build replays your change automatically — including on a fresh clone on another machine.
+This rewrites `overlay/patches/` from the commits sitting on top of upstream. From then on, every
+build replays your change automatically — including on a fresh clone on another machine.
+
+It refreshes the projects that already carry patches. A project you have committed to for the first
+time is reported and *skipped*, and the run exits non-zero so a preflight notices: pass `--adopt` to
+export those too, or they are lost on the next clean bootstrap.
 
 Run it on a clean tree, with no half-applied patches and nothing uncommitted. See GOTCHAS 14 for
 what happens otherwise.
@@ -195,8 +209,10 @@ PRESET=full OPTIONS=nav-icons ./forge/bootstrap.sh   # a preset's tag, your opti
 ```
 
 **One run builds one image.** Building two means running it twice, which costs almost nothing: the
-57 GB of compiled intermediates in `out/` are reused between runs, and the only thing a second run
-repeats is a one-to-four-second overlay pass.
+57 GB of compiled intermediates in `out/` are reused between runs. A second run still re-inits the
+manifests, resets the patched projects and re-syncs before the overlay pass, and changing the option
+set triggers an `installclean` — so it is minutes plus whatever actually recompiles, not seconds,
+but nowhere near the hours the first one took.
 
 Optional extras — an on-device Linux environment (the `linux` option), F-Droid, Firefox, Google
 apps — are options; see *Options and presets* below.
@@ -350,8 +366,11 @@ device, so **adding one touches no device tree at all**. See [options/README.md]
 
 Three things worth knowing:
 
-- **Every option not named by the build is off.** Nothing is inherited from the environment or from
-  a previous run, so a build is exactly the set you asked for.
+- **Every option not named by the build is off**, with one deliberate exception. Nothing is
+  inherited from the environment or from a previous run, so a build is otherwise exactly the set you
+  asked for. The exception is `volte`, which turns itself on when the device's stock firmware is
+  present — a phone that cannot place a call is not a sensible default. It announces itself on
+  stdout either way, and a build without it is tagged `-novolte`.
 - **The option set is part of the build fingerprint**, so changing it triggers the `installclean`
   that makes the change actually take. Otherwise you would get a repackage of the last build's
   staging with no sign anything was wrong.
@@ -371,7 +390,7 @@ COMMON_OPTIONS="... linux"
 ```
 
 Builds a container-capable kernel. The Magisk module that goes with it, `linux-chroot-<version>.zip`
-(Ubuntu Base in a chroot, plus `lx-docker`; scripts only, ~7 KB), is written next to the ROM on
+(Ubuntu Base in a chroot, plus `lx-docker`; scripts only, ~7 KB), is written to `build_output/` on
 every build whether or not the option is on — installing it on the phone is opt-in, and nothing
 mounts at boot.
 
@@ -456,7 +475,9 @@ modules/              on-device Magisk modules (linux-chroot)
 templates/            source templates instantiated into device trees by tools/ (ims-bridge: the compat
                       ImsService over an OEM legacy IMS app, see tools/new-ims-bridge.sh)
 prebuilt/             fetchers for Magisk, F-Droid, Firefox, Fulguris, K-9, KDE Connect, TermOne Plus,
-                      Nextcloud, Linphone, ConnectBot
+                      Nextcloud, Linphone, ConnectBot, OpenVPN, Syncthing-Fork
+patches/<branch>/     engine patches applied on every device on that branch
+docs/                 the worked methods (see Documentation below)
 GOTCHAS.md            known traps, indexed by symptom
 ```
 
@@ -512,8 +533,8 @@ only facts about *that phone*: a kernel config, a HAL fix, an SoC quirk. Anythin
 in an option, and the split is the point.
 
 Two other things here that the alternatives do not have, for whatever they are worth: a release path
-that inspects the built image and refuses to publish assets that are not yours
-([docs/RELEASING.md](docs/RELEASING.md)), and [GOTCHAS.md](GOTCHAS.md), which is a list of traps that
+that inspects the built image rather than its label, and refuses to publish Google's apps or
+reclaimed manufacturer art ([docs/RELEASING.md](docs/RELEASING.md)), and [GOTCHAS.md](GOTCHAS.md), which is a list of traps that
 have actually cost time rather than a list of features.
 
 **Also worth a look:** [Akipe/awesome-android-aosp](https://github.com/Akipe/awesome-android-aosp)

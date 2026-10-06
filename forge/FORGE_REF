@@ -2,6 +2,6 @@
 # Update with: ./forge/tools/sync-forge.sh [ref]
 url=https://github.com/TheDBP/rom-forge.git
 ref=main
-commit=36b79f5a8889b0298cbbf33d2a76380f6b3f6630
-subject=options: escape backticks in DESC/NOTE -- option.conf is sourced
-synced=2026-10-06T18:08:02Z
+commit=753897f8170f0a37e34ea104942ba71866c67508
+subject=docs: three claims that moved on
+synced=2026-10-06T19:48:02Z

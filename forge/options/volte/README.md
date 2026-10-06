@@ -37,11 +37,26 @@ the failure `options/README.md`'s sub-switch rule exists to prevent, and the rea
 not. So the absence is said out loud and recorded in the filename — and the absence, not the
 presence, is what the tag marks, because on these devices VoLTE is the expected state.
 
+## Releasing
+
+Both kinds of image are publishable. A ROM already ships the manufacturer's vendor blobs — the
+camera HAL, the modem firmware — and the IMS stack is one more of them, so `release.sh` treats it
+as a shipped capability rather than as something to refuse.
+
+What it does instead is make sure the filename and the bytes agree. The content audit hashes
+whatever staging produced and reports which IMS artifacts are in the image; provenance says whether
+the build had `WITH_VOLTE` on. A device with these keys set produces two publishable tags — `<tag>`
+with the stack and `<tag>-novolte` without — and `release.sh` accepts whichever it finds, newest
+first. It used to look only for the bare tag, so a `-novolte` build could not be published at all
+and failed with "no built zip for preset", which reads as a missing build rather than a missing
+case.
+
 ## What a device supplies
 
 Three keys in `device.conf` (see `device.conf.example`):
 
-- `VOLTE_STOCK_GLOB` — what the user drops in the repo root. Whatever the stage script can read.
+- `VOLTE_STOCK_GLOB` — what the user drops in the repo root, or in `build_output/`; both are
+  searched. Whatever the stage script can read.
 - `VOLTE_STAGE_SCRIPT` — run after the device patches, as `<script> <stock-file> <aosp-root>`.
   Optional: a device may stage from its own `device.mk` instead, as the Robin does.
 - `VOLTE_STAGED_MARKER` — the file that exists only once staging worked. This is the whole safety

@@ -22,6 +22,27 @@ INPLACE_DEVICE=""
 _args=(); while [ "$#" -gt 0 ]; do
   case "$1" in
     --device) INPLACE_DEVICE="${2:?--device needs a name}"; shift 2 ;;
+    # Everything else is configuration, not flags -- but an unrecognised argument used to be
+    # collected, ignored, and the build started anyway. `./bootstrap.sh --help` therefore began a
+    # container build and a ~100 GB sync, which is an expensive way to ask a question.
+    -h|--help)
+      cat <<'USAGE'
+bootstrap.sh -- build one ROM image.
+
+  PRESET=<name>  ./forge/bootstrap.sh     a saved option set from device.conf
+  OPTIONS="a b"  ./forge/bootstrap.sh     pick options directly (replaces the preset's set)
+  EXTRA_OPTIONS=<name> PRESET=<name> ...  add one option to a preset
+  ./forge/bootstrap.sh                    the first preset in device.conf
+
+  --device <name>    build devices/<name>/ inside a rom-forge clone instead of a device repo
+
+Configuration is environment and device.conf, not flags: JOBS, KEEP_GOING, BUILD_ROOT,
+TURBO_BUILD_ID, KEYS_DIR, FDROID_PINS, STOCK_ROM, SOONG_MEM_LIMIT. See forge/README.md and
+forge/device.conf.example.
+USAGE
+      exit 0 ;;
+    -*) echo "!! unknown option: $1 -- bootstrap takes configuration from the environment and" >&2
+        echo "   device.conf, not flags. Try --help." >&2; exit 2 ;;
     *)        _args+=("$1"); shift ;;
   esac
 done
@@ -74,6 +95,20 @@ source "$DEVICE_REPO/device.conf"
 # after device.conf so it can override anything there, and applies to whichever preset you build
 # rather than needing an -oem twin of each one. Anything it adds is reflected in the build tag.
 [ -f "$DEVICE_REPO/device.conf.local" ] && source "$DEVICE_REPO/device.conf.local"
+# The friendly onboarding block above only fires when device.conf is ABSENT. The device template
+# SHIPS one with every identity key blank, so the commonest first run -- clone the template, read
+# "What you can build", run it -- landed on a bare "DEVICE: parameter null or not set" with nothing
+# pointing back at start-here.sh.
+_blank=""
+for _k in DEVICE DEVICE_CODENAME DEVICE_SLUG BRANCH LUNCH_TARGET; do
+  [ -n "${!_k:-}" ] || _blank="$_blank $_k"
+done
+if [ -n "$_blank" ]; then
+  echo "!! device.conf has not been filled in yet -- still blank:$_blank" >&2
+  echo "   Run ./start-here.sh, which works out your phone and fills these in." >&2
+  echo "   Or set them by hand in $DEVICE_REPO/device.conf (see forge/device.conf.example)." >&2
+  exit 1
+fi
 : "${DEVICE:?}" "${DEVICE_CODENAME:?}" "${DEVICE_SLUG:?}" "${BRANCH:?}" "${LUNCH_TARGET:?}"
 : "${UBUNTU_VER:=20.04}" "${JDK_VER:=11}" "${MANIFEST_URL:=https://github.com/LineageOS/android.git}"
 
@@ -145,7 +180,7 @@ if [ -n "${VOLTE_STOCK_GLOB:-}" ] || [ -n "${VOLTE_STAGED_MARKER:-}" ]; then
   case " $BUILD_OPTIONS " in
     *" volte "*)
       if [ -z "$_volte_have" ]; then
-        echo "!! volte was asked for, but there is no ${VOLTE_STOCK_GLOB:-stock firmware} in $DEVICE_REPO" >&2
+        echo "!! volte was asked for, but there is no ${VOLTE_STOCK_GLOB:-stock firmware} in $DEVICE_REPO or $BUILD_ROOT" >&2
         echo "!! and nothing staged in the tree." >&2
         echo "!! VoLTE is the manufacturer's IMS stack rebuilt from the phone's own firmware; it" >&2
         echo "!! cannot be built from source and cannot ship in this repo. See the VoLTE/IMS doc." >&2
@@ -158,7 +193,7 @@ if [ -n "${VOLTE_STOCK_GLOB:-}" ] || [ -n "${VOLTE_STAGED_MARKER:-}" ]; then
         BUILD_OPTIONS="$BUILD_OPTIONS volte"
         echo ">> volte: on -- $_volte_have"
       else
-        echo ">> volte: OFF -- no ${VOLTE_STOCK_GLOB:-stock firmware} found in $DEVICE_REPO"
+        echo ">> volte: OFF -- no ${VOLTE_STOCK_GLOB:-stock firmware} found in $DEVICE_REPO or $BUILD_ROOT"
         echo "   This image will NOT be able to place calls over LTE. Carriers have been shutting"
         echo "   down the 2G/3G voice these devices fall back to, so on many networks that means no"
         echo "   calls at all. Supply the stock firmware to get VoLTE; see the VoLTE/IMS doc."
