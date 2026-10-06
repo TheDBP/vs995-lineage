@@ -5,7 +5,6 @@ Subject: [PATCH] msm8996-common: doze: drop the first-launch help dialog
 
 packages/resources/devicesettings 01e1033 removed doze_settings_help_title/_text;
 LGDoze stopped compiling. Nothing else used the dialog.
-
 ---
  .../settings/doze/DozeSettingsFragment.java   | 29 -------------------
  1 file changed, 29 deletions(-)
