@@ -718,6 +718,37 @@ calls through it. Shipped as device patch 0036 (`ims/bridge/`, `ims/ims.mk`,
   over IMS (`ImsPhoneCallTracker` dial, no CSFB). Then: `setImsStatusToModem`
   still dropped -- if the modem keeps CSFB routing, that is the next hook.
 
+## Media/RTP: what `GetIPAddrOfCP() Error[21]` actually is (static analysis, 2026-10-05)
+
+Full trace in `.scratch/ims4/research-media/FINDINGS.md`. Short version, all verified by
+disassembly:
+
+- `AudioAdaptor::GetIPAddrOfCP` is not a property or ioctl. It binders into LG's MMPF media service
+  (`getService("lgeims_mmpf")`, descriptor `com.lge.mmpf.MMPFService`) -> `MMPF_CP_IF::GetIpAddrOfCP`
+  -> `qcci_qmi_lge_ims_send_cmd(msg_id 0x060C)` on **QMI service 0x2BF** (`lge_ims`, idl v2).
+  0x060C is an opaque `u8[300]` tunnel: the request goes out, the answer comes back as an
+  **indication**, handled by `MMPF_OnIndFromCP`, which copies an ASCII address from `ind+0x24`.
+- **`Error[21]` is a 1000 ms timeout waiting for that indication** -- a hardcoded `0x15`, the only
+  failure value. The QMI send result is discarded, so a failed send and a silent modem look
+  identical. It also means the `lgeims_mmpf` binder service WAS published and the server ran (a dead
+  proxy returns 2).
+- **It does not blank the SDP.** `AudioProfileConfigurer` falls back to the stack's normal
+  local-address accessor when `GetModemIPv6()` is empty, and that address is what
+  `AudioNego::MakeSDPFromProfile` puts in `c=`/`o=`. So a call should still negotiate a real address;
+  whether RTP must instead go through the modem socket bridge
+  (`MMPF_CP_IF::createSocketBridge/sendDataToBridge` exist) is the open question.
+- `UpdateModemIPv6` has eight gates, each logged. One is `IsUseSingleIP()` =
+  `persist.lg.data.iwlan.ipsec.ap` (its only caller anywhere); it is set nowhere in the tree, so
+  `setprop persist.lg.data.iwlan.ipsec.ap 1` suppresses the query entirely -- useful to confirm the
+  gate, useless as a fix.
+- **Next test costs nothing:** capture `logcat -b all -s MMPF QMI_FW LGIMS` during call setup. Those
+  two tags are not in the LGIMS filter and have never been captured here. They split the cause:
+  `[LGE_VSS_QCCI][AP] ERROR!!! ims handle is NULL` means the QMI client never came up in the
+  `lgeims_mmpf` process (AP-side, suspect the IPC-router/qmuxd socket under sepolicy); `IMS sendind
+  MSG = 0x60c` with no `MMPF_OnIndFromCP` means the modem never answered.
+  Also read the existing `UpdateModemIPv6() - PDP profile : %d` line: profile `-1` is an AP-side
+  config gap.
+
 ## RCS: what to revisit after voice works (notes, not yet attempted)
 
 Flash A/B target voice VoLTE only. RCS (messaging, presence, enriched calling)
