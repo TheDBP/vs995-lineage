@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 09:55:16 -0400
+Subject: [PATCH] msm8996-common: do not offer Wi-Fi calling, video calling or
+ satellite
+
+None of the three work on this device, and all three were being advertised by
+CarrierConfig defaults rather than by anything the device reports.
+
+VT needs the MMPF media path and WFC needs an ePDG tunnel from LG's ipsecd,
+which is not ported; the IMS stack's own capability reporting already says
+Voice only, so the toggles were offering features that could only fail.
+Satellite is worse than useless: the gating keys are already false, but the
+defaults still declare per-provider services, so SIM settings renders a
+Satellite section and then withdraws it when the capability check returns, a
+visible flash on every visit.
+
+No mcc/mnc filter on any of them: these are device limitations, not carrier
+ones. Re-enable per feature if any is ever made to work.
+
+---
+ .../CarrierConfigOverlay/res/xml/vendor.xml   | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml b/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
+index d28cf9e1..2963f670 100644
+--- a/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
++++ b/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
+@@ -27,6 +27,25 @@ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.-->
+ 
+ <carrier_config_list>
++    <!-- This device cannot do Wi-Fi calling or video calling over IMS, so do not offer either in
++         SIM settings. VoLTE works (see IMS.md); VT needs the MMPF media path, and WFC needs an ePDG
++         tunnel from LG's ipsecd, which is not ported. Both toggles otherwise appear because the
++         CarrierConfig defaults say the carrier supports them, while the device's own capability
++         reporting already says Voice only. No mcc/mnc filter: it is a device limit, not a carrier
++         one. Re-enable per feature if either is ever made to work. -->
++    <carrier_config>
++        <boolean name="carrier_wfc_ims_available_bool" value="false" />
++        <boolean name="carrier_vt_available_bool" value="false" />
++
++        <!-- No satellite hardware or service here. The gating keys are already false
++             (satellite_attach_supported_bool, satellite_entitlement_supported_bool), but the
++             defaults still declare per-provider services, so SIM settings renders a Satellite
++             section and then removes it when the capability check comes back: a visible flash.
++             Empty both so it is never offered. -->
++        <pbundle_as_map name="carrier_supported_satellite_services_per_provider_bundle" />
++        <int-array name="carrier_roaming_satellite_default_services_int_array" num="0" />
++    </carrier_config>
++
+     <!-- Below are some sample filters for various scenarios.
+          You can have multiple carrier_config blocks.
+          blocks for various filters. For more info visit DefaultCarrierConfigService.java

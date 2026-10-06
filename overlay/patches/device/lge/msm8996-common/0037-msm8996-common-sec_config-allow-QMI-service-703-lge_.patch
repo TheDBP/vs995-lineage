@@ -21,7 +21,6 @@ With the rule, GetIPAddrOfCP returns the address and the audio media session
 reaches LIVE. Note the rule must be programmed before the modem registers the
 service -- running irsc_util by hand after boot changes nothing, which is why
 this belongs in the file init.qcom.rc already feeds it.
-
 ---
  configs/permissions/sec_config | 9 +++++++++
  1 file changed, 9 insertions(+)

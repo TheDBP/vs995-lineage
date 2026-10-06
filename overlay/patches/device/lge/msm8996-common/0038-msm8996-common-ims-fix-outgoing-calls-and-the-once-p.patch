@@ -29,7 +29,6 @@ is parked anyway.
 
 Verified 2026-10-06 07:52: outgoing and incoming calls, both with two-way
 audio, back to back on one boot.
-
 ---
  ims/build-ims4.sh                             |  3 +++
  .../com/lge/ims/compat/TelephonyCompat.java   | 25 +++++++++++++++++++

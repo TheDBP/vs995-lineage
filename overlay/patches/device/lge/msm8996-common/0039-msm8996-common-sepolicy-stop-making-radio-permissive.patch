@@ -4,16 +4,21 @@ Date: Tue, 6 Oct 2026 08:13:55 -0400
 Subject: [PATCH] msm8996-common: sepolicy: stop making radio permissive
 
 Every rule here is an observed denial from a boot that registered and carried a
-call with two-way audio, so the set is complete for the paths VoLTE uses.
+call with two-way audio, then corrected against a boot with the policy actually
+enforcing.
 
-- lgeims_mmpf and com.lge.ims.phone get their own service types and a
-  service_contexts, instead of landing on default_android_service. This is the
-  one that matters: lgeims_mmpf failing to publish costs VoLTE its audio,
-  because the modem's voice media session is created through it, and the add
-  only ever succeeded because radio was permissive.
+- lgeims_mmpf, com.lge.ims.phone and com.lge.ims.rcs.media get their own
+  service types and a service_contexts, instead of landing on
+  default_android_service. lgeims_mmpf is the one that matters: it fails to
+  publish otherwise, and the modem's voice media session is created through it,
+  so calls connect and are silent.
 - The QMI socket to the modem is AF_MSM_IPC, which the policy has no class for,
-  so it lands on the generic socket class; ioctl 0xc304 is the IPC-router
-  bind/lookup. Self-scoped.
+  so it lands on the generic socket class. The ioctl xperm covers the whole
+  0xc300-0xc30f IPC-router family rather than the one command first observed:
+  naming a single ioctl switches the domain/class into whitelist mode, so every
+  other ioctl is then denied, which is NOT what the plain ioctl permission did.
+  Allowing only 0xc304 cost VoLTE its audio on the first enforcing boot --
+  0xc302 was denied and GetIPAddrOfCP went back to Error[21].
 - net.ims.* and persist.lg.ims.* get a system_internal_prop type: radio is a
   coredomain and may only set a system_property_type, while those would
   otherwise be system_prop and default_prop.
@@ -22,20 +27,20 @@ The IPsec helpers already spelled out their radio-side rules, so only their
 stale 'radio is permissive' comment needed correcting.
 
 ---
- sepolicy/private/ims.te            | 28 +++++++++++++++++++++++-----
+ sepolicy/private/ims.te            | 36 +++++++++++++++++++++++++-----
  sepolicy/private/lge_ims_ipsec.te  |  4 ++--
  sepolicy/private/lge_ims_prop.te   |  3 +++
- sepolicy/private/property_contexts |  6 ++++++
- sepolicy/private/service_contexts  |  6 ++++++
- 5 files changed, 40 insertions(+), 7 deletions(-)
+ sepolicy/private/property_contexts |  6 +++++
+ sepolicy/private/service_contexts  |  7 ++++++
+ 5 files changed, 49 insertions(+), 7 deletions(-)
  create mode 100644 sepolicy/private/lge_ims_prop.te
  create mode 100644 sepolicy/private/service_contexts
 
 diff --git a/sepolicy/private/ims.te b/sepolicy/private/ims.te
-index 02455570..c5eb62e2 100644
+index 02455570..270bc8a0 100644
 --- a/sepolicy/private/ims.te
 +++ b/sepolicy/private/ims.te
-@@ -1,5 +1,23 @@
+@@ -1,5 +1,31 @@
 -# LG IMS (VoLTE) bringup -- com.lge.ims runs in the radio domain (android.uid.phone). The 2016 stack
 -# sets net.ims.* properties, opens QMI sockets, reads config files. BRINGUP: make radio permissive to
 -# surface every denial in one pass (userdebug only); replace with the audit2allow'd rules + remove this
@@ -50,16 +55,24 @@ index 02455570..c5eb62e2 100644
 +
 +type lgeims_mmpf_service, service_manager_type;
 +type lge_ims_phone_service, service_manager_type;
++type lge_ims_rcs_media_service, service_manager_type;
 +
 +# The media service that creates the modem's voice session, and the stack's own phone service.
 +allow radio lgeims_mmpf_service:service_manager { add find };
 +allow radio lge_ims_phone_service:service_manager { add find };
++# Published even though RCS is not wired up; denying it is only noise, and media code reaches for it.
++allow radio lge_ims_rcs_media_service:service_manager { add find };
 +
 +# The QMI socket to the modem (AF_MSM_IPC). The policy has no class for that family, so it lands on
-+# the generic `socket` class; ioctl 0xc304 is the IPC-router bind/lookup. Self-scoped: these are the
-+# stack's own sockets, not another domain's.
++# the generic `socket` class. Self-scoped: these are the stack's own sockets, not another domain's.
++#
++# The xperm rule covers the whole MSM IPC-router ioctl family, not the one command first observed.
++# Listing a single ioctl switches this domain/class into whitelist mode, so every OTHER ioctl is
++# then denied -- which is not what the plain `ioctl` permission did before. Allowing only 0xc304
++# cost VoLTE its audio: 0xc302 was denied, the QMI query to the modem failed, and
++# AudioAdaptor::GetIPAddrOfCP went back to Error[21] with no modem media session.
 +allow radio self:socket { create read write ioctl };
-+allowxperm radio self:socket ioctl { 0xc304 };
++allowxperm radio self:socket ioctl { 0xc300-0xc30f };
 +
 +# net.ims.* is the registration/operator state the stack publishes; persist.lg.ims.* is its own
 +# saved state. Both are labelled in property_contexts next to this file.
@@ -104,13 +117,14 @@ index 7215af0b..9a7dedc9 100644
 +persist.lg.ims.          u:object_r:lge_ims_prop:s0 prefix
 diff --git a/sepolicy/private/service_contexts b/sepolicy/private/service_contexts
 new file mode 100644
-index 00000000..644ed3fa
+index 00000000..8de0ca97
 --- /dev/null
 +++ b/sepolicy/private/service_contexts
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,7 @@
 +# Services com.lge.ims publishes and looks up. Without these they land on default_android_service,
 +# which radio may not add to or find, so the `add` only succeeded while radio was permissive -- and
 +# lgeims_mmpf failing to publish costs VoLTE its audio, since the modem media session is created
 +# through it.
 +lgeims_mmpf             u:object_r:lgeims_mmpf_service:s0
 +com.lge.ims.phone       u:object_r:lge_ims_phone_service:s0
++com.lge.ims.rcs.media   u:object_r:lge_ims_rcs_media_service:s0

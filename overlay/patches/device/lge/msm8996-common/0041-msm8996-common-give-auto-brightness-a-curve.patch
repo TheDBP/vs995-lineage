@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 09:55:16 -0400
+Subject: [PATCH] msm8996-common: give auto-brightness a curve
+
+config_automatic_brightness_available is true, but nothing supplied a curve:
+no /vendor/etc/displayconfig XML, no device arrays, and the framework's own
+config_autoBrightnessLcdBacklightValues is empty. The controller had nothing to
+map lux onto and parked the panel near its minimum, so the screen came up far
+too dim (mScreenBrightness 0.07 against a default of 0.33).
+
+A17 still honours these legacy arrays when no DisplayDeviceConfig exists.
+config_autoBrightnessLevels holds the lux thresholds and the first control
+point is implicit at 0 lux, so the backlight array carries exactly one more
+entry. Tuned by eye against the panel's 255 max, not measured in nits.
+
+---
+ .../base/core/res/res/values/config.xml       | 38 +++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/overlay/frameworks/base/core/res/res/values/config.xml b/overlay/frameworks/base/core/res/res/values/config.xml
+index 930f949d..6a300b05 100644
+--- a/overlay/frameworks/base/core/res/res/values/config.xml
++++ b/overlay/frameworks/base/core/res/res/values/config.xml
+@@ -240,4 +240,42 @@
+     <!-- True if the device supports Sustained Performance Mode -->
+     <bool name="config_sustainedPerformanceModeSupported">true</bool>
+ 
++
++    <!-- Auto-brightness curve. config_automatic_brightness_available is true below, but neither
++         this device nor the framework supplied a curve (no /vendor/etc/displayconfig XML, and the
++         framework's own config_autoBrightnessLcdBacklightValues is empty), so the controller had
++         nothing to map lux onto and parked the panel near its minimum, so the screen came up far too
++         dim. A17 still honours these legacy arrays as the fallback when no DisplayDeviceConfig
++         exists (DisplayBrightnessMappingConfig: "Load the old configuration in the range [0, 255]").
++
++         config_autoBrightnessLevels holds the lux thresholds; the first control point is implicit
++         at 0 lux, so the backlight array must have exactly one more entry. Panel max is 255.
++         Tuned by eye on hardware; adjust the backlight row, not the lux row, if it is off. -->
++    <integer-array name="config_autoBrightnessLevels">
++        <item>10</item>
++        <item>30</item>
++        <item>60</item>
++        <item>120</item>
++        <item>240</item>
++        <item>450</item>
++        <item>900</item>
++        <item>1800</item>
++        <item>3500</item>
++        <item>7000</item>
++    </integer-array>
++
++    <integer-array name="config_autoBrightnessLcdBacklightValues">
++        <item>30</item>   <!-- dark room -->
++        <item>48</item>
++        <item>68</item>
++        <item>92</item>   <!-- typical indoors -->
++        <item>120</item>
++        <item>150</item>
++        <item>180</item>
++        <item>210</item>  <!-- overcast outdoors -->
++        <item>235</item>
++        <item>250</item>
++        <item>255</item>  <!-- direct sun -->
++    </integer-array>
++
+ </resources>
