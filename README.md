@@ -40,21 +40,25 @@ claimed.
 
 ## Build it
 
-> **You must supply LG's stock firmware.** VoLTE here is LG's own 2016 IMS app reworked to run on
-> Android 17. It is proprietary, so this repo carries the recipe and none of the ingredients — you
-> provide a stock VS995 Nougat KDZ and a prepare step turns it into the artifacts the build needs.
-> Every preset includes IMS, so a tree without them **does not fall back to a ROM without VoLTE; it
-> fails to build.** Budget for the extraction before you start, not after it stops.
+> **VoLTE needs LG's stock firmware, which cannot be shipped here.** It is LG's own 2016 IMS app
+> reworked to run on Android 17 — proprietary, so this repo carries the recipe and none of the
+> ingredients.
 >
-> Step by step: **[Building the IMS stack from stock
+> Drop a stock VS995 Nougat system image named `VS995_Stock_ROM_*.image` in the root of this repo
+> and the first build rebuilds the IMS stack out of it by itself; later builds skip straight past.
+> Leave it out and **the build still works** — it just ships without VoLTE, says so while it runs,
+> and names the image `-novolte`. Asking for `volte` explicitly without the firmware stops the
+> build rather than handing you an image that cannot place a call.
+>
+> An image rather than the KDZ: nothing here reads LG's container format, so extract it once with
+> [kdztools](https://github.com/ehem/kdztools) first. Step by step, including what a build without
+> VoLTE actually costs you: **[Building the IMS stack from stock
 > firmware](IMS.md#building-the-ims-stack-from-stock-firmware)**.
 
 ```sh
 git clone https://github.com/TheDBP/vs995-lineage.git
 cd vs995-lineage
-
-# one-time: stage the IMS artifacts out of your stock KDZ (see the link above),
-# then the ordinary build:
+cp ~/VS995_Stock_ROM_VS9951CA.image .     # optional; without it you get a -novolte image
 PRESET=clean ./forge/bootstrap.sh
 ```
 

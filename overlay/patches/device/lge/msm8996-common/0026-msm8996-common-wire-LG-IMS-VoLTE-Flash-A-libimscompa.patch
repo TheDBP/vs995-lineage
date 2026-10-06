@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Mon, 5 Oct 2026 03:55:41 -0400
+Date: Tue, 6 Oct 2026 13:10:07 -0400
 Subject: [PATCH] msm8996-common: wire LG IMS (VoLTE) Flash A -- libimscompat,
  Ims4 (apk-bundled 32-bit libs), namespace
 
@@ -9,8 +9,8 @@ Subject: [PATCH] msm8996-common: wire LG IMS (VoLTE) Flash A -- libimscompat,
  ims/ims.mk                     | 10 +++++
  ims/libimscompat/Android.bp    | 11 ++++++
  ims/libimscompat/imscompat.cpp | 68 ++++++++++++++++++++++++++++++++++
- msm8996.mk                     |  3 ++
- 5 files changed, 109 insertions(+)
+ msm8996.mk                     | 12 ++++++
+ 5 files changed, 118 insertions(+)
  create mode 100644 ims/Android.bp
  create mode 100644 ims/ims.mk
  create mode 100644 ims/libimscompat/Android.bp
@@ -147,13 +147,22 @@ index 00000000..4ab71ad4
 +int OMX_Init(void) { return 0; } int OMX_Deinit(void) { return 0; } int OMX_GetHandle(void) { return 0; } int OMX_FreeHandle(void) { return 0; }
 +}
 diff --git a/msm8996.mk b/msm8996.mk
-index bed6f3a1..74a10bed 100644
+index bed6f3a1..2cb376a8 100644
 --- a/msm8996.mk
 +++ b/msm8996.mk
-@@ -466,3 +466,6 @@ PRODUCT_COPY_FILES += \
+@@ -466,3 +466,15 @@ PRODUCT_COPY_FILES += \
  PRODUCT_COPY_FILES += \
      frameworks/native/data/etc/android.hardware.wifi.direct.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.direct.xml \
      frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml
 +
-+# LG IMS (VoLTE) -- Flash A
++# LG IMS (VoLTE). Gated on the forge's `volte` option, which turns itself on whenever a stock LG
++# system image is present and off when it is not -- see VOLTE_STOCK_GLOB in device.conf and
++# IMS.md. Everything ims.mk installs is rebuilt from that firmware and none of it can be committed,
++# so without it this include would make the tree unbuildable rather than merely VoLTE-less.
++#
++# A soft include would be the wrong tool: the artifacts are produced by the option's staging step,
++# so "missing" means the staging did not run, and the option's require.sh has already stopped the
++# build by then. This switch is about whether IMS was asked for at all.
++ifeq ($(WITH_VOLTE),true)
 +include $(LOCAL_PATH)/ims/ims.mk
++endif
