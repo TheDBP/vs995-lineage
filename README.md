@@ -5,14 +5,26 @@ build config; each Android version is its own branch, named after the upstream L
 
 | branch | Android | status |
 |---|---|---|
-| [`lineage-22.2`](../../tree/lineage-22.2) | 15 | builds, flashes and runs |
+| [`lineage-24.0`](../../tree/lineage-24.0) | 17 | boots enforcing, **with working VoLTE** — outgoing and incoming calls, two-way audio |
 
-Upstream LineageOS still maintains this device, so the branches are customisation on top: a short
-device patch series plus the shared options, built with
-[rom-forge](https://github.com/TheDBP/rom-forge), vendored as `forge/` on each branch.
+Upstream LineageOS stops at 22.2 for this device, so this is not customisation on top of a
+maintained build: it is a 2022-era device tree carried onto a 2026 platform, plus LG's own 2016 IMS
+stack bridged into the modern telephony framework. Built with
+[rom-forge](https://github.com/TheDBP/rom-forge), vendored as `forge/` on the branch.
 
-Nothing newer than 15 is planned: Android 16+ needs eBPF features the 4.4 kernel lacks — see
-`ANDROID-16.md` on the branch.
+**VoLTE matters more here than the version number.** Carriers have been retiring the 2G/3G
+circuit-switched voice this phone shipped with, so without it the device is not a phone. Nobody else
+has VoLTE working on this handset on LineageOS. Building it needs a stock LG firmware image you
+supply — none of LG's IMS stack may be redistributed, so the repo carries the recipe and none of the
+ingredients. A build without that firmware still works; it just ships without VoLTE and says so.
+
+Android 16+ was supposed to be out of reach on a 4.4 kernel, for want of eBPF features it does not
+have. It is reachable, with the bpf loaders patched to carry on with what the kernel can give them
+instead of hanging.
+
+`lineage-22.2` has been retired. It carried no IMS work and no kernel patches, so on a modern
+network it can neither place a call nor — on a bootloader-unlocked handset — get mobile data. Its
+history is preserved as the tag `archive/lineage-22.2`.
 
 Installing, building, what is changed and what is not: the README on the branch.
 
