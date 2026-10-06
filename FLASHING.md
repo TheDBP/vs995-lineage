@@ -2,6 +2,7 @@
 
 Artifacts land in `build_output/src/out/target/product/vs995/` — the ROM zip
 (`lineage-24.0-*-UNOFFICIAL-*-vs995.zip`), `recovery.img`, `boot.img` and `boot-magisk.img`.
+This build has working VoLTE; see `IMS.md`.
 `build_output/artifacts/` holds the same set under the full build name and survives the next build.
 
 Data on these devices is disposable — clean-flash without ceremony.
@@ -21,23 +22,30 @@ answer **Yes** twice at the reset prompt (Lineage recovery boots instead of wipi
 adb reboot bootloader
 fastboot flash recovery recovery.img # the built one, not TWRP: matches the ROM's encryption
 fastboot reboot                      # `fastboot boot recovery.img` is refused (unsigned image)
-adb reboot recovery                  # once Android is up; or the key combo above
-# This does NOT reach recovery on its own. The bootloader puts its factory-reset prompt in the
-# way and Lineage recovery boots only if you answer Yes twice. Unanswered, the phone returns to
-# Android and adb reports state `device`, as though the reboot never happened.
-# ON THE PHONE: Factory reset -> Format data, then Apply update -> Apply from ADB
+# wait for Android, then go to sideload FROM SYSTEM -- not from recovery:
+adb reboot sideload
 adb sideload lineage-24.0-*-vs995.zip
-adb reboot -p                        # power off instead of booting
+adb reboot
 ```
-`full` zips carry Magisk in their boot image already. For a `clean` or `libre` zip, root afterwards
-with `fastboot flash boot boot-magisk.img` (the ROM install rewrites boot).
+
+**Go to sideload from system, not from recovery.** `adb reboot sideload` issued while already in
+recovery stalls at the bootloader's factory-reset prompt, which shows no USB at all, so the phone
+looks dead until someone presses keys. From a booted system it goes straight there. If you do end
+up at that prompt: **Power + Volume Down**, release Power at the LG logo for a second and press it
+again, then answer **Yes** twice (Lineage recovery boots instead of wiping).
+
+A dirty flash (no wipe) is fine between builds of this ROM. To wipe, do it from recovery *after*
+sideloading, not before: Factory reset -> Format data.
+
+No preset carries Magisk. To root any build, `fastboot flash boot boot-magisk.img` afterwards —
+the ROM install rewrites boot, so it has to be after, not before.
 
 ## What this build contains
 - **interactive governor and HMP retune** (device patch; full table in README.md). The values read
   back as set on a running vs995; the gain is not measured. Thermal trips and core_ctl untouched.
 - **build tag** (device patch): `ro.lineage.version` ends `-UNOFFICIAL-<tag>-vs995`; the tag names
   the preset.
-- With `PRESET=full`: MindTheGapps and Magisk root. Every preset: a container-capable kernel (`linux`).
+- With `PRESET=full`: MindTheGapps. Every preset: a container-capable kernel (`linux`).
 - **four HALs on AIDL** (24.0 removed their HIDL interfaces): lights and fingerprint use the generic
   Lineage services, LiveDisplay uses `vendor.lineage.livedisplay-service.sdm`, and IR keeps a device
   implementation ported to AIDL because its blaster is a UART behind `libcir_driver`, not a LIRC node.

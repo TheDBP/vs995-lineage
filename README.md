@@ -1,14 +1,36 @@
-# LG V20 (Verizon) — LineageOS 22.2 (Android 15)
+# LG V20 (Verizon) — LineageOS 24.0 (Android 17)
 
-A custom LineageOS 22.2 ROM for the **LG V20, Verizon GSM-unlocked** (`vs995`, Snapdragon 820 /
-msm8996, 2016).
+A custom LineageOS 24.0 ROM for the **LG V20, Verizon** (`vs995`, Snapdragon 820 / msm8996, 2016),
+**with working VoLTE**.
 
-Android 15 on 2016 hardware is a community stretch, but LineageOS still carries the device tree and
-it is actively maintained, so this repo is customisation on top rather than a rescue.
+Android 17 on 2016 hardware is a stretch. LineageOS still carries the device trees, but nobody
+builds this device on 24.0, so a good deal of this repo is making a 22.2-era device tree work on a
+2026 platform: HALs that lost their HIDL interfaces, bpf loaders that assume a newer kernel, and a
+first-stage mount that moved. The rest is the thing that actually makes the phone usable as a phone
+— the 2016 LG IMS stack carrying calls on a 2026 framework.
 
-**Status: builds, flashes and runs.** Running on one V20 (`full` preset). Hardware support and
-limitations are official LineageOS 22.2's for this device; what this build changes is listed
-below, and nothing else is claimed.
+**Status: builds, flashes, runs, and makes VoLTE calls.** Running on one V20. Hardware support is
+otherwise LineageOS's for this device; what this build changes is listed below, and nothing else is
+claimed.
+
+### What works that would not otherwise
+
+- **VoLTE — outgoing and incoming calls with two-way audio.** Carrier networks have shut down the
+  2G/3G circuit-switched voice this phone shipped with, so without this the device is not a phone.
+  See **[IMS.md](IMS.md)**.
+- **Mobile data on a DirtySanta-unlocked handset** — the engineering bootloader leaves a flag the
+  modem reads as "factory cable attached" and refuses every data call, on any ROM including the
+  official nightly. A kernel patch clears it.
+- **Boots enforcing** on a device tree that needed thirteen separate fixes to get there.
+
+### What does not work
+
+- **SMS over IMS.** Texting works over the circuit-switched path, which is what the phone uses
+  today; only the IMS path is unfinished (the modem refuses the QMI WMS transport registration).
+- **Wi-Fi calling and video calling.** Not offered — VT needs a media path that does not work here,
+  and WFC needs an ePDG tunnel that is not ported. Both are hidden rather than left to fail.
+- **RCS** is not provided by the IMS stack. Google Messages does RCS over its own backend on plain
+  data, so a `full` build is the way to get it.
 
 ## Build it
 
@@ -20,7 +42,7 @@ PRESET=clean ./forge/bootstrap.sh
 
 Needs Docker and enough free disk for a full AOSP checkout plus build output.
 
-**Output:** `build_output/src/out/target/product/vs995/lineage-22.2-*.zip`
+**Output:** `build_output/src/out/target/product/vs995/lineage-24.0-*.zip`
 
 ## What you can build
 
@@ -33,7 +55,7 @@ PRESET=clean ./forge/bootstrap.sh      # or libre, or full
 To pick options directly instead of using a preset:
 
 ```sh
-OPTIONS="gapps root" ./forge/bootstrap.sh
+OPTIONS="gapps fdroid" ./forge/bootstrap.sh
 ```
 
 Options come from the forge (`forge/options/`) and behave the same on every device; what lives in
@@ -41,106 +63,78 @@ this repo's `overlay/patches/` is only what is true of this phone.
 
 ## Presets
 
-One build command produces one image. A preset is a saved selection of options — it has no
-behaviour of its own.
+A preset is a saved selection of options — it has no behaviour of its own. The authoritative list
+is `device.conf`.
 
 | preset | tag | adds over `clean` |
 |---|---|---|
 | `clean` | `turbo-clean` | nothing — this is the baseline |
-| `libre` | `turbo-libre` | `fdroid`, `k9`, `termoneplus`, `kdeconnect`, `connectbot`, `linphone` |
-| `full` | `turbo` | `fdroid`, `gapps`, `k9`, `termoneplus`, `kdeconnect`, `connectbot`, `linphone` |
-| `stock` | `stock` | nothing, and **not the shared set either** — plain LineageOS plus only the patches that make this hardware run. Reserved by the forge, so it needs no row in `device.conf`. Use it to tell our bugs from upstream's. |
+| `libre` | `turbo-libre` | `fdroid`, `k9`, `kdeconnect`, `connectbot` |
+| `full` | `turbo` | `gapps` plus everything in `libre` |
 
-Every preset also carries the shared set, which is what makes this build look and behave the way
-it does regardless of which preset you pick:
+Every preset also gets the common options in `device.conf`: dark theme, themed icons, teal accent,
+minimal home, LiveDisplay off, advanced restart, setup-wizard nag skip, and a container-capable
+kernel.
 
-`advanced-restart` `dark-default` `google-feed-off` `home-defaults` `linux` `livedisplay-off` `minimal-home` `nav-icons` `nfc-off` `setupwizard-nag-skip` `teal-skin` `teal-wallpaper` `themed-icons`
-
-`EXTRA_OPTIONS` adds an option to whichever preset you build, and every option added that way
-appends its name to the tag:
-
-```sh
-EXTRA_OPTIONS=nextcloud PRESET=libre ./forge/bootstrap.sh   # tag turbo-libre-nextcloud
-```
-
-`oem` is in no preset and has nothing to stage here: there is no reclaimed LG pack
-(`OEM_ASSET_PACK=none`), so `EXTRA_OPTIONS=oem` fails at the asset check. To use it, point
-`OEM_ASSET_PACK` and `STOCK_ROM_GLOB` at a pack you have, in `device.conf.local` (gitignored).
-
-## Options
-
-Every option this device uses, and what each one does. They live in `forge/options/`, so they
-work on any device rather than being wired into this tree.
-
-| option | what it does |
-|---|---|
-| `advanced-restart` | Advanced restart in the power menu |
-| `dark-default` | Default to dark theme |
-| `bringup` | Debug build: adbd from boot with no authorisation prompt, plus persistent logcat, so a build that never reaches the lock screen can still be traced. **Never hand out an image built with this** — it accepts adb from any host. |
-| `fdroid` | F-Droid app store + Privileged Extension (silent installs/updates) |
-| `firefox` | Firefox (Fennec F-Droid) as the browser, replacing Jelly — still available, but 320 MB staged, so no preset carries it now |
-| `connectbot` | ConnectBot: an SSH client with saved hosts, keys and port forwarding |
-| `linphone` | Linphone: a SIP client, for voice over data where the device has no VoLTE |
-| `fulguris` | Fulguris as the browser, replacing Jelly — a WebView browser, 9 MB where Fennec stages 320 MB. Mutually exclusive with `firefox`. **In no preset**: it overrides Jelly, so a preset carrying it ships the only browser in the image — and its first run asks you to accept a privacy policy and terms with nothing else able to open them. Dropping it restores Jelly. `EXTRA_OPTIONS=fulguris` to add it |
-| `gapps` | Google apps: Play Store and GMS from MindTheGapps, plus Google's versions of the stock apps |
-| `google-feed-off` | Google feed (-1 screen) off by default |
-| `home-defaults` | Home screen defaults: no icon labels, no auto-add of new apps |
-| `kdeconnect` | KDE Connect: phone <-> desktop notifications, clipboard, files, remote input |
-| `linux` | On-device Linux environment (chroot + Docker): container kernel config and cgroup fixes |
-| `livedisplay-off` | LiveDisplay off by default |
-| `minimal-home` | Minimal home screen: hotseat only, no second page |
-| `k9` | K-9 Mail (the Thunderbird for Android codebase) as the mail client |
-| `nav-icons` | Nextbit Robin style nav-bar icons, drawn as scalable tintable vectors (on every preset) |
-| `nextcloud` | Nextcloud bundle: Files, Talk, NextPush, Deck, NC Passwords, Notes, DAVx5, Tasks — the current F-Droid build of each, fetched at build time. `EXTRA_OPTIONS=nextcloud` on any preset, see *Presets* |
-| `nextcloud-core` | Nextcloud, the four that make the phone a client: Files, Talk, NextPush, DAVx5 |
-| `nfc-off` | NFC off by default |
-| `oem` | The manufacturer's own boot animation, wallpapers and sounds, reclaimed from its stock ROM — no LG pack exists, see *Presets* |
-| `root` | Magisk baked into the boot image, so the zip flashes pre-rooted |
-| `setupwizard-nag-skip` | Skip recovery/metrics/backup setup pages |
-| `teal-skin` | Teal accent — fixed #009D94 Monet preset seed |
-| `teal-wallpaper` | Teal-shag default wallpaper (baked into framework-res) |
-| `termoneplus` | TermOne Plus terminal emulator |
-| `syncthing-fork` | Syncthing-Fork: continuous file sync between your own devices, no server or account |
-| `themed-icons` | Themed (monochrome) app icons on by default |
+`EXTRA_OPTIONS=bringup` adds adb from boot without an authorisation prompt and persistent logcat —
+useful when a build does not reach the lock screen, and not something to ship to someone else.
 
 ## Device patches
 
-2 patches across 2 upstream projects, applied at build time from
-`overlay/patches/`. Nothing here is a fork: each is a single commit against the upstream tree,
-replayed on every build, so upstream stays upstream and what we changed stays legible.
+71 patches across 15 upstream projects, applied at build time from `overlay/patches/`. Nothing here
+is a fork: each is a single commit against the upstream tree, replayed on every build, so upstream
+stays upstream and what we changed stays legible. One patch per thing it enables.
 
-One patch per thing it enables.
+### Making a 22.2-era device tree boot on 24.0
 
-### `device/lge/msm8996-common`
+`device/lge/msm8996-common`, `device/lge/v20-common`, `device/lge/vs995` — HIDL manifest entries for
+interfaces 24.0 deleted, the IR and LiveDisplay HALs moved to AIDL, the lights and fingerprint HALs
+switched to the generic Lineage AIDL services, FCM target level raised, first-stage mount of
+`/system` from a ramdisk, a tmpfs on `/metadata`, and the in-kernel low memory killer enabled
+because this kernel has no PSI for lmkd.
 
-- **interactive governor and HMP retune** — the table under *About the tuning* below; one pass
-  over `init.power.sh` rather than two.
+### Kernel (`kernel/lge/msm8996`)
 
-### `device/lge/vs995`
+4.4-era kernel against a 2026 userspace: `MADV_WIPEONFORK`, netlink xperms for Android 16+ policy,
+the `cpuset_v2_mode` mount option, a clang fix, and the DirtySanta factory-cable flag that blocks
+mobile data.
 
-- **tag the build so a custom image is identifiable** — build tag in the zip filename and
-  `ro.lineage.version` (`…-UNOFFICIAL-<tag>-vs995`), overridable via `TURBO_BUILD_ID` (how the forge
-  gives each preset its tag). Set before the `common_full_phone` inherit, or `version.mk` never sees
-  it.
+### bpf and connectivity (`packages/modules/Connectivity`, `system/bpf`)
+
+The 24.0 bpf loaders assume a 4.14+ kernel and either hang or reboot on 4.9. These let them load
+what they can and carry on instead.
+
+### VoLTE (`device/lge/msm8996-common`, `frameworks/opt/telephony`)
+
+The large one — fifteen patches bringing LG's 2016 `Ims4` up on Android 17, plus an `ImsBridge` that
+presents it to the modern telephony stack, the IPsec helpers its SIP registration needs, a QMI
+service rule without which calls have no audio, and one genuine AOSP bug fix (the compat
+`ImsService` path crashes the phone process). **[IMS.md](IMS.md)** is the full account.
+
+### Display and feel
+
+420 dpi, 1.15× font scale, the 32dp status-bar override dropped so the notch strip is respected, an
+auto-brightness curve, and an interactive-governor retune (table below).
 
 ## Flash it
 
 Prebuilt images are on the [Releases](https://github.com/TheDBP/vs995-lineage/releases) page —
-always the `libre` preset: LineageOS plus F-Droid, Fulguris, K-9 Mail, TermOne Plus, KDE Connect,
-ConnectBot and Linphone,
-no Google apps, not rooted. Each release is two files: the ROM zip and a `<name>-recovery.img`
-(Lineage recovery from the same build).
+always the `libre` preset: LineageOS plus F-Droid, K-9 Mail, KDE Connect and ConnectBot, no Google
+apps, not rooted. Each release is two files: the ROM zip and a `<name>-recovery.img` (Lineage
+recovery from the same build).
 
 See **[FLASHING.md](FLASHING.md)**. This is a V20 — the bootloader unlock path differs by carrier
 model, and `vs995` is the Verizon variant. Do not follow `h918` or `us996` guides.
 
 ## What is different from stock LineageOS
 
+- VoLTE (see above) — the reason this repo exists
 - Themed (monochrome) icons on by default, dark theme by default, teal accent
 - Minimal home screen; Google feed (−1 screen) off
 - NFC off by default; LiveDisplay off; advanced restart in the power menu
 - Setup wizard skips the recovery/metrics/backup nags
-- `libre` and `full`: Fulguris, F-Droid, K-9 Mail, TermOne Plus, KDE Connect, ConnectBot, Linphone; `full` adds GApps and Magisk
+- 420 dpi and a 1.15× font scale, so the notch strip is not sat on by the status bar
+- `libre` and `full`: F-Droid, K-9 Mail, KDE Connect, ConnectBot; `full` adds GApps
 - Responsiveness tuning on the CPU governor (see below)
 
 ### About the tuning
@@ -167,8 +161,9 @@ measured.
 
 | File | What is in it |
 |---|---|
-| [ANDROID-16.md](ANDROID-16.md) | Whether this device can go to Android 16 — short answer: harder than it looks |
+| [IMS.md](IMS.md) | How VoLTE was made to work, and what is still open |
 | [FLASHING.md](FLASHING.md) | Step-by-step flashing |
+| [ANDROID-16.md](ANDROID-16.md) | Historical: whether this device could go past 22.2, researched before 24.0 was attempted |
 | `device.conf` | Every knob this build has |
 
 ## License
