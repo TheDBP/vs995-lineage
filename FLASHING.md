@@ -50,6 +50,13 @@ No preset carries Magisk. To root any build, `fastboot flash boot boot-magisk.im
 the ROM install rewrites boot, so it has to be after, not before.
 
 ## What this build contains
+- **VoLTE** (sixteen device patches plus one to `frameworks/opt/telephony`): LG's 2016 `Ims4`
+  brought up on Android 17 behind an `ImsBridge`, with outgoing and incoming calls carrying two-way
+  audio. Needs no setup; it registers about a minute after boot. `IMS.md` is the full account.
+  Wi-Fi calling and video calling are deliberately not offered, and SMS still goes over the
+  circuit-switched path.
+- **enforcing, with no permissive domains** — including the IMS stack, which during bring-up ran
+  under a `permissive radio` exemption that is now gone.
 - **interactive governor and HMP retune** (device patch; full table in README.md). The values read
   back as set on a running vs995; the gain is not measured. Thermal trips and core_ctl untouched.
 - **build tag** (device patch): `ro.lineage.version` ends `-UNOFFICIAL-<tag>-vs995`; the tag names
