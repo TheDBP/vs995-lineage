@@ -685,6 +685,21 @@ calls through it. Shipped as device patch 0036 (`ims/bridge/`, `ims/ims.mk`,
   entry; a tree with `invoke-virtual-quick` is NOT a usable source). Step 3.5
   copies the clean smali over the stubs. LG's `ImsCallProfile` wire format adds
   `mRestrictCause` after `mMediaProfile`; the bridge's Java copy reads it.
+- **The compat path needs a framework patch on A17** (`overlay/patches/frameworks/opt/telephony/
+  0001`): `ImsServiceControllerCompat.createMMTelCompat()` builds the MmTel/registration/config
+  compat adapters and calls `setDefaultExecutor()` on none of them, while every `*ImplBase`
+  dispatches its binder calls through `CompletableFuture.runAsync(.., mExecutor)`. A null executor
+  throws in `screenExecutor()` instead of running on the caller's thread, so the first framework call
+  (`ImsProvisioningController` -> `ImsConfig#addConfigCallback`) is fatal and `com.android.phone`
+  restart-loops as soon as the bridge binds. Verified on hardware 2026-10-05 by pushing the bridge
+  onto the A3 build. The modern path is unaffected (`ImsService#getConfig/getRegistration/
+  createMmTelFeature` each set it) -- the compat path has been deprecated since P and nothing in
+  tree exercises it.
+- **MO dialling does not consult the modem's VoPS flag**: `GsmCdmaPhone.useImsForCall()` ->
+  `ImsPhone.isVoiceOverCellularImsEnabled()` -> `ImsPhoneCallTracker
+  .isImsCapabilityInCacheAvailable(CAPABILITY_TYPE_VOICE, REGISTRATION_TECH_LTE)`, i.e. the
+  capability cache fed by the registration callbacks -- the bitmap the bridge synthesizes.
+  `vops=false` from the RIL does not block an IMS call here; a missing bitmap does.
 - **A17 build facts**: telecom is a mainline module -- `platform_apis: true` is
   enough for `android.telecom.*`; AIDL `include_dirs` needs `frameworks/base/
   telecomm/framework/aidl-export` for `VideoProfile`; `android/view/Surface.aidl`
