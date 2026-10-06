@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Mon, 5 Oct 2026 20:22:16 -0400
+Date: Tue, 6 Oct 2026 12:35:36 -0400
 Subject: [PATCH] msm8996-common: ims: ImsBridge, the compat ImsService over
  LG's Ims4
 
@@ -32,6 +32,7 @@ them and REGISTER worked while a call would have arrived with no number.
 Wiring: ImsBridge and the telephony.ims feature xml (without it PhoneGlobals
 never constructs an ImsResolver), config_ims_mmtel_package, and
 ro.telephony.block_binder_thread_on_incoming_calls=false.
+
 ---
  ims/bridge/Android.bp                         |  38 ++
  ims/bridge/AndroidManifest.xml                |  43 +++
@@ -64,21 +65,21 @@ ro.telephony.block_binder_thread_on_incoming_calls=false.
  .../src/com/lge/imslegacy/ImsSsInfo.java      |  33 ++
  .../lge/imslegacy/ImsStreamMediaProfile.java  |  41 +++
  .../imslegacy/ImsSuppServiceNotification.java |  54 +++
- .../bridge/CallSessionListenerAdapter.java    | 221 +++++++++++
- .../ims/bridge/CallSessionWrapper.java        | 202 +++++++++++
+ .../bridge/CallSessionListenerAdapter.java    | 235 ++++++++++++
+ .../ims/bridge/CallSessionWrapper.java        | 214 +++++++++++
  .../lineageos/ims/bridge/ConfigWrapper.java   | 185 ++++++++++
  .../src/org/lineageos/ims/bridge/Convert.java |  95 +++++
  .../org/lineageos/ims/bridge/EcbmWrapper.java |  51 +++
  .../ims/bridge/ImsBridgeService.java          |  37 ++
- .../ims/bridge/LegacyMMTelFeature.java        | 342 ++++++++++++++++++
+ .../ims/bridge/LegacyMMTelFeature.java        | 344 ++++++++++++++++++
  .../ims/bridge/ModemVoiceSession.java         |  68 ++++
  .../ims/bridge/MultiEndpointWrapper.java      |  61 ++++
  .../bridge/RegistrationListenerAdapter.java   | 199 ++++++++++
- .../org/lineageos/ims/bridge/UtWrapper.java   | 121 +++++++
+ .../org/lineageos/ims/bridge/UtWrapper.java   | 121 ++++++
  ims/build-ims4.sh                             |  37 +-
  ims/ims.mk                                    |  13 +
  .../services/Telephony/res/values/config.xml  |   2 +-
- 45 files changed, 2427 insertions(+), 4 deletions(-)
+ 45 files changed, 2455 insertions(+), 4 deletions(-)
  create mode 100644 ims/bridge/Android.bp
  create mode 100644 ims/bridge/AndroidManifest.xml
  create mode 100644 ims/bridge/aidl/android/view/Surface.aidl
@@ -1107,10 +1108,10 @@ index 00000000..f2d5168d
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/CallSessionListenerAdapter.java b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionListenerAdapter.java
 new file mode 100644
-index 00000000..58dcfd62
+index 00000000..08ec50f3
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionListenerAdapter.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,235 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.os.RemoteException;
@@ -1175,7 +1176,21 @@ index 00000000..58dcfd62
 +    @Override
 +    public void callSessionStartFailed(IImsCallSession s, ImsReasonInfo r) throws RemoteException {
 +        ModemVoiceSession.setActive(false);
-+        mTarget.callSessionStartFailed(modern(s), Convert.toModern(r));
++        final android.telephony.ims.ImsReasonInfo reason = Convert.toModern(r);
++        // The OEM stack reports a remote hangup on a call that was never answered as startFailed --
++        // in its model the session never started. On 17 that is only half true: ImsPhoneCallTracker
++        // .onCallStartFailed unwinds mPendingMO and nothing else, and mPendingMO is null for an
++        // incoming call, so the ringing connection is never disconnected and the handset rings
++        // until it is rebooted. Telecom's own CallAnomalyWatchdog spots the zombie after 2 minutes
++        // and cannot clear it either. Deliver MT as the termination it actually is; MO must stay
++        // startFailed, because that is what drives the CSFB retry path.
++        if (mOwner != null && mOwner.isIncoming()) {
++            Log.i(TAG, "startFailed on an incoming session -> terminated, code "
++                    + (reason == null ? -1 : reason.getCode()));
++            mTarget.callSessionTerminated(modern(s), reason);
++            return;
++        }
++        mTarget.callSessionStartFailed(modern(s), reason);
 +    }
 +
 +    @Override
@@ -1334,10 +1349,10 @@ index 00000000..58dcfd62
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java
 new file mode 100644
-index 00000000..eff98bb0
+index 00000000..9a3d1a17
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,214 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.os.Message;
@@ -1363,13 +1378,25 @@ index 00000000..eff98bb0
 +    private static final String TAG = ImsBridgeService.TAG;
 +
 +    private final IImsCallSession mLegacy;
++    private final boolean mIncoming;
 +
 +    CallSessionWrapper(IImsCallSession legacy) {
++        this(legacy, false);
++    }
++
++    /** @param incoming true for a session adopted from an incoming call (MT), false for a dial. */
++    CallSessionWrapper(IImsCallSession legacy, boolean incoming) {
 +        mLegacy = legacy;
++        mIncoming = incoming;
 +    }
 +
 +    IImsCallSession legacy() {
 +        return mLegacy;
++    }
++
++    /** MT or MO. The listener adapter needs this to route startFailed; see the note there. */
++    boolean isIncoming() {
++        return mIncoming;
 +    }
 +
 +    private static RuntimeException rethrow(String what, RemoteException e) {
@@ -1934,10 +1961,10 @@ index 00000000..b7c23b98
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java b/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
 new file mode 100644
-index 00000000..73341664
+index 00000000..7ec31abe
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,344 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.app.PendingIntent;
@@ -2232,7 +2259,9 @@ index 00000000..73341664
 +        try {
 +            com.lge.imslegacy.internal.IImsCallSession s =
 +                    legacy().getPendingCallSession(sessionId, callId);
-+            return s == null ? null : new CallSessionWrapper(s);
++            // Marked incoming: this is the only path an MT session arrives by, and the listener
++            // adapter has to tell MT from MO to deliver a pre-answer hangup correctly.
++            return s == null ? null : new CallSessionWrapper(s, true);
 +        } catch (RemoteException e) {
 +            throw rethrow("getPendingCallSession", e);
 +        }

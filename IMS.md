@@ -867,7 +867,7 @@ Verified on the Flash B build plus the pushed bridge revisions:
     column. AOSP's provider throws, `EABAgent` catches nothing on its own thread, and
     `com.lge.ims` is `persistent`, so the IMS process died after every call and restarted unable to
     re-register. Stubbed via `ims/smali-stubs.txt` (build-ims4.sh step 4.4).
-- **DIAGNOSED (2026-10-06), not yet fixed: an unanswered incoming call rings forever.** Caught in
+- **FIXED (2026-10-06): an unanswered incoming call used to ring forever.** Caught in
   the act on the GApps build -- a real call arrived 12:06:55, the caller gave up, and the handset
   was still `RINGING` and driving the vibrator ten minutes later, with Telecom refusing to dial
   ("Cannot place a call as there is an unanswered incoming call"). This is the same rough edge
@@ -887,11 +887,13 @@ Verified on the Flash B build plus the pushed bridge revisions:
   (`UCCallManager ... onCallTerminated :: An active call is terminated`), so the information is
   there -- only the callback it is delivered on is wrong.
 
-  **Fix:** in `CallSessionListenerAdapter.callSessionStartFailed`, forward MT sessions as
-  `callSessionTerminated` and leave MO sessions alone (MO genuinely needs `startFailed`, which is
-  what drives CSFB retry). Needs the wrapper to carry whether the session came from
-  `createCallSession` (MO) or was adopted from an incoming-call intent (MT). Untested -- it touches
-  the working call path, so it wants a real call either side of it.
+  **Fix** (folded into the ImsBridge patch, and into `forge/templates/ims-bridge`):
+  `CallSessionWrapper` carries an `incoming` flag, set only on the `getPendingCallSession` path --
+  the only way an MT session arrives -- and `CallSessionListenerAdapter.callSessionStartFailed`
+  delivers MT as `callSessionTerminated`. MO is untouched: it needs `startFailed`, which is what
+  drives the CSFB retry path. **Not yet exercised on hardware**: it only fires on a call nobody
+  answers, so confirm with one deliberately unanswered incoming call, then check
+  `dumpsys telecom | grep mCalls` is empty and that the next outgoing call dials.
 - **SMS over IMS: AP side works, modem side does not** (tested 2026-10-06 without a build, by
   pushing stock `imswmsproxy` + the 64-bit `libqmi_wms_client_helper.so` and running it by hand).
   Ims4's SMS client reached `Update SoI Service Mode :: STATE_READY` for the first time -- it had
@@ -939,9 +941,8 @@ Verified on the Flash B build plus the pushed bridge revisions:
   cannot show this class of bug, because whitelist mode does not exist until the rule does: budget
   an enforcing boot. See rom-forge GOTCHAS 38.
 - **Still open:** `setImsStatusToModem` is logged and dropped (if the modem keeps CSFB routing, that
-  is the next hook); SMS over IMS needs the modem to accept the QMI WMS transport (above); and an unanswered
-  incoming call rings forever because Ims4 reports the remote hangup as `startFailed` (diagnosed
-  above, one-line fix in the bridge, untested).
+  is the next hook); SMS over IMS needs the modem to accept the QMI WMS transport (above).
+  The unanswered-call hang is fixed above but not yet exercised on hardware.
 
 ## Two user-visible warts on the GApps build (2026-10-06)
 
