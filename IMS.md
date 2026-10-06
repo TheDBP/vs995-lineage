@@ -956,7 +956,7 @@ Verified on the Flash B build plus the pushed bridge revisions:
     column. AOSP's provider throws, `EABAgent` catches nothing on its own thread, and
     `com.lge.ims` is `persistent`, so the IMS process died after every call and restarted unable to
     re-register. Stubbed via `ims/smali-stubs.txt` (build-ims4.sh step 4.4).
-- **FIXED (2026-10-06): an unanswered incoming call used to ring forever.** Caught in
+- **FIXED and VERIFIED ON HARDWARE (2026-10-06): an unanswered incoming call used to ring forever.** Caught in
   the act on the GApps build -- a real call arrived 12:06:55, the caller gave up, and the handset
   was still `RINGING` and driving the vibrator ten minutes later, with Telecom refusing to dial
   ("Cannot place a call as there is an unanswered incoming call"). This is the same rough edge
@@ -983,38 +983,61 @@ Verified on the Flash B build plus the pushed bridge revisions:
   drives the CSFB retry path. **Not yet exercised on hardware**: it only fires on a call nobody
   answers, so confirm with one deliberately unanswered incoming call, then check
   `dumpsys telecom | grep mCalls` is empty and that the next outgoing call dials.
-- **SMS over IMS: AP side works, modem side does not** (tested 2026-10-06 without a build, by
-  pushing stock `imswmsproxy` + the 64-bit `libqmi_wms_client_helper.so` and running it by hand).
-  Ims4's SMS client reached `Update SoI Service Mode :: STATE_READY` for the first time -- it had
-  been failing `Initialize WMS client` since the port began -- and `@/tmp/ims/wms/wms_proxy` binds.
-  But `qmi_wms_transport_init()` returns `QMI_INTERNAL_ERR`, so `ImsSmsDispatcher` keeps
-  `cap=false` and SMS correctly falls back to CS (`GsmSMSDispatcher: sendSms: isIms()=false`).
-  SMS works for the user either way; this only matters if the carrier drops CS fallback.
-  Notes for whoever picks it up: it is NOT the sec_config class of bug (zero IPC-router denials,
-  and QMI service 5 already has a rule). Two things to eliminate first -- the test ran it as root
-  rather than stock's `user system, group radio system net_admin net_raw` (init cannot exec a plain
-  `vendor_file`, so a real domain + exec type is needed, shaped like `lge_ims_ipsec.te`), and the
-  AOSP/QTI RIL may already own the modem's WMS transport, which would refuse a second registration.
-  The binary must live in `/vendor/bin`, not `/system/bin` as on stock: it links vendor QMI libs and
-  a system-namespace binary cannot see `/vendor/lib64` (pre-Treble stock had no such split).
 
-  Reproduce the staging (artifacts are proprietary, so they live in `.scratch`, never the repo):
+  **Confirmed 2026-10-06 15:52 on the flashed build.** A real call, left unanswered, reaped in 5 ms:
 
   ```
-  I=.scratch/kdz/vs995/parts/system.image
-  debugfs -R 'dump /system/bin/imswmsproxy             <out>/imswmsproxy'              $I
-  debugfs -R 'dump /vendor/lib64/libqmi_wms_client_helper.so <out>/...' $I   # 64-bit: 22480 bytes
-  # /vendor/lib holds a 32-bit namesake (26136 bytes) -- the wrong one fails at link.
-  adb push ... ; cp to /vendor/bin + /vendor/lib64 ; chmod 755/644 ; restorecon
-  adb shell 'setsid nohup /vendor/bin/imswmsproxy >/data/local/tmp/wmsproxy.log 2>&1 &'
-  grep '@/tmp/ims/wms' /proc/net/unix      # wms_proxy present = the chain is live
+  15:52:42.192  ImsPhoneCallTracker: processIncomingCall: incoming call intent
+  15:52:55.963  LGIMS_J [GII-UC] onCallTerminated :: An active call is terminated
+  15:52:55.968  ImsBridge: startFailed on an incoming session -> terminated, code 510
+  15:52:55.982  ImsPhoneCallTracker: onCallTerminated reasonCode=510
+  15:52:56.068  LGIMS_J [GII-UC] onCallDestroyed :: activeCalls=0
   ```
 
-  When it ships: `cc_prebuilt_binary` + an rc (stock: `class main, user system, group radio system
-  net_admin net_raw`) + a sepolicy domain shaped like `lge_ims_ipsec.te`, and
-  `libqmi_wms_client_helper.so` as a vendor prebuilt. Deliberately NOT shipped yet: it would be a
-  daemon that runs, fails `transport_init` and does nothing, and adding an untested component to
-  the flash that also removes `permissive radio` would muddy the attribution if VoLTE regresses.
+  The line that used to read `onCallStartFailed reasonCode=510` now reads `onCallTerminated`, and
+  `mCalls` is empty afterwards with no CallAnomalyWatchdog zombie report.
+- **SMS over IMS: BLOCKED on a transport mismatch, not a permission or ordering problem**
+  (tested on hardware 2026-10-06, both earlier leads disproven). Staging the stock `imswmsproxy` +
+  the 64-bit `libqmi_wms_client_helper.so` and running it gets further than before: the proxy binds
+  `@/tmp/ims/wms/wms_proxy`, Ims4's SMS client reaches `Update SoI Service Mode :: STATE_READY`, and
+  the whole AP-side chain is live. It still fails, one step earlier than previously recorded:
+
+  ```
+  ImsWmsClient :: InitWmsService(rmnet0)
+  ImsWmsClient :: srvc_init_client - client=-1, qmi_err_code=0     <- the real failure
+  ImsWmsClient :: InitTransport - client=-1, smsFormat=1
+  ImsWmsClient :: transport_init failed; status=-1                 <- only the consequence
+  ```
+
+  `transport_init` is not where it breaks -- it is called with an already-invalid client. The QMI
+  **client allocation** fails, and `qmi_err_code=0` says QMI never reported an error, which is what
+  you get when the library cannot reach its transport at all rather than being refused by it.
+
+  **Why: the binary speaks legacy QMUX and this ROM has no qmuxd.** `imswmsproxy` links
+  `libqmi_client_qmux.so` + `libqmi.so`, the 2016 QMUX client libraries, which expect a `qmuxd`
+  serving `/dev/socket/qmux_radio` as a socket. On this build that path is a **directory** owned by
+  `qcrild` (holding `qcril_radio_config0/1`), no `qmuxd` binary is shipped, and the data stack is
+  `qcrild` + `netmgrd` + `ipacm` over the IPC router. The hardcoded `rmnet0` is the other half of
+  the same story: the device has `rmnet_data0..7`, and no `rmnet0` at all.
+
+  **Both earlier leads are wrong, and so was a later one.** It is not the daemon running as root
+  instead of `group radio`: as root it gets all the way to the QMI client call, and there are no
+  IPC-router denials, exactly as the original note said. It is not our RIL "owning" the WMS
+  transport either -- nothing is refusing it, there is nothing there to refuse. (The sec_config rule
+  `5:4294967295:1001` granting WMS to radio only is real but irrelevant here; it would matter if the
+  transport existed.)
+
+  **What a fix would take**, neither of them small: run a stock `qmuxd` alongside `qcrild` and give
+  it back `/dev/socket/qmux_radio`, which `qcrild` currently owns -- a direct conflict; or re-point
+  the WMS client at the modern QMI path (`libqmi_cci` over the IPC router) and fix the `rmnet0`
+  name, i.e. replace the transport half of `libqmi_wms_client_helper.so`. Until then SMS stays on
+  the circuit-switched path, which works and which the user has verified both ways.
+
+  Ordering note for whoever retries: Ims4 asks once. It sends `IMSConnected` to the proxy ~59 s
+  after `sys.boot_completed` and never retries, so a hand-started proxy has to be up *and*
+  modem-connected before that. Started earlier than ~boot+25 s the modem is not ready and the QMI
+  init fails anyway.
+
 - **DONE: runs enforcing** (2026-10-06, patch `sepolicy: stop making radio permissive`). No
   permissive domains at all, and zero `permissive=0` denials in the radio domain on a boot that
   registers. `lgeims_mmpf`, `com.lge.ims.phone` and `com.lge.ims.rcs.media` have service types and
