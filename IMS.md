@@ -741,6 +741,44 @@ disassembly:
   `persist.lg.data.iwlan.ipsec.ap` (its only caller anywhere); it is set nowhere in the tree, so
   `setprop persist.lg.data.iwlan.ipsec.ap 1` suppresses the query entirely -- useful to confirm the
   gate, useless as a fix.
+### Measured during a real INVITE (2026-10-05 22:01, A3 build, MMPF/QMI_FW captured for the first time)
+
+The three-way split above resolves to a **fourth** case: the client is alive and the modem is not
+silent -- the request never leaves the AP.
+
+```
+[LGE_VSS_QCCI][AP] IMS sendind MSG = 0x60c
+QCCI qmi_cci_flush_tx_q: Error sending TXN: svc_id: 703 txn_id: 4 msg_id: 1548
+xport_send: Sendto failed for port 14336
+[mmpf_cpif_send_msg] send_msg_sync error: -16        (QMI transport error)
+[MMPF_CP_IF_send_msg] fail to send message to cp[-16]
+```
+`svc_id 703` = 0x2BF, `msg_id 1548` = 0x60C. Four retries, ~1.1 s apart, so a failed modem-address
+query adds **~3.3 s to call setup**. Same root as the "QMI svc_id 703 TXN send errors" already noted
+above; the sendto on the IPC-router port fails, so 0x060C never reaches the modem.
+
+Also measured, and it is an AP-side config gap of the familiar kind:
+`UpdateModemIPv6() - Entered. nPDNType[1], nIsIPv6[-1]` then `PDP profile : -1, Socket Pos : 0`.
+LG's stack expects LG's RIL to tell it the IMS PDN profile number; with a non-LG RIL it asks the
+modem about profile -1.
+
+**Why this is probably not what blocks audio:** the IMS PDN is up and healthy on the AP side. The
+framework reports APN `ims` CONNECTED over LTE on `rmnet_data2` with a global IPv6 LinkAddress and
+the P-CSCF addresses populated -- the same interface SIP and the IPsec SAs already use. That is a
+real local address for `AudioProfileConfigurer`'s fallback to put in `c=`/`o=`. Open question stays
+whether LG's media binds RTP to it correctly, not whether an address exists.
+
+To try after the bridge works, in this order:
+1. `setprop persist.lg.data.iwlan.ipsec.ap 1` -- skips the doomed query (single caller, read per
+   call), reaching the same fallback ~3.3 s sooner. Make it a build property only if it measures.
+2. If audio is one-way or silent, capture `MMPF` during the call and look at the RTP socket bind,
+   not at these errors.
+
+`lgeims_mmpf` **is** published (`avc: denied { add } ... name=lgeims_mmpf` from the IMS app,
+permissive) -- so it needs a `service_contexts` entry before `permissive radio` can be removed, or
+media dies. A separate denial stops the *shell* domain finding it, which is why `service list` looks
+empty; that is the check lying, not the service missing.
+
 - **Next test costs nothing:** capture `logcat -b all -s MMPF QMI_FW LGIMS` during call setup. Those
   two tags are not in the LGIMS filter and have never been captured here. They split the cause:
   `[LGE_VSS_QCCI][AP] ERROR!!! ims handle is NULL` means the QMI client never came up in the
