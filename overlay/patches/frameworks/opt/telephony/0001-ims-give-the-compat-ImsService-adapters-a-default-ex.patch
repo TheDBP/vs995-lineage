@@ -16,28 +16,41 @@ com.android.phone immediately and it restart-loops:
     at ImsProvisioningController$MmTelFeatureListener.connectionReady
 
 Every *ImplBase dispatches its binder calls through
-CompletableFuture.runAsync(.., mExecutor), and ImsConfigImplBase's no-arg
-constructor leaves that executor null. The modern path never hits it because
-ImsService#getConfig/getRegistration/createMmTelFeature each call
-setDefaultExecutor() on the stub they return; createMMTelCompat() creates the
-three compat adapters and calls it on none of them. A null executor there is
-not a fall back to the calling thread -- screenExecutor() throws -- so the
-first framework call into the adapter is fatal.
+CompletableFuture.runAsync(.., executor).join(), and the compat adapters are
+constructed without one. A null executor there is not a fall back to the
+calling thread -- screenExecutor() throws -- so the first framework call into
+an adapter is fatal. ImsService does the equivalent for the modern path in
+getConfig/getRegistration/createMmTelFeature; createMMTelCompat() did it for
+none of the three adapters it creates.
 
-Set it on all three (MmTel feature, registration and config adapters): the
-other two reach the same runAsync and would fail the same way on the next
-call. Found bringing LG's Ims4 up on 24.0; the compat path has been
-deprecated since P and nothing in tree exercises it.
+Use a direct executor rather than this controller's single-threaded
+mExecutor. It is what these adapters were written for (they predate the
+executor) and what ImsService itself falls back to when an implementation
+does not override getExecutor(). Sharing one thread across the three
+adapters would also serialize call setup behind the 2s-per-capability
+CountDownLatch waits in changeEnabledCapabilities/queryCapabilityConfiguration
+-- long enough for the network to cancel an incoming INVITE.
+
+Found bringing LG's Ims4 up on 24.0; the compat path has been deprecated
+since P and nothing in tree exercises it.
 
 ---
- .../telephony/ims/ImsServiceControllerCompat.java  | 14 ++++++++++++--
- 1 file changed, 12 insertions(+), 2 deletions(-)
+ .../ims/ImsServiceControllerCompat.java       | 26 +++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
 
 diff --git a/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java b/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java
-index 6b9866968c..9ef4a4ffb6 100644
+index 6b9866968c..61531fb9c0 100644
 --- a/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java
 +++ b/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java
-@@ -264,8 +264,18 @@ public class ImsServiceControllerCompat extends ImsServiceController {
+@@ -39,6 +39,7 @@ import com.android.ims.internal.IImsMMTelFeature;
+ import com.android.ims.internal.IImsServiceController;
+ import com.android.internal.annotations.VisibleForTesting;
+ 
++import java.util.concurrent.Executor;
+ import java.util.concurrent.ExecutorService;
+ 
+ /**
+@@ -264,8 +265,29 @@ public class ImsServiceControllerCompat extends ImsServiceController {
          ImsRegistrationCompatAdapter regAdapter = new ImsRegistrationCompatAdapter();
          mmTelAdapter.addRegistrationAdapter(regAdapter);
          mRegCompatAdapters.put(slotId, regAdapter);
@@ -46,15 +59,26 @@ index 6b9866968c..9ef4a4ffb6 100644
 +        ImsConfigCompatAdapter configAdapter = new ImsConfigCompatAdapter(
 +                mmTelAdapter.getOldConfigInterface());
 +        mConfigCompatAdapters.put(slotId, configAdapter);
-+        // The modern path does this in ImsService#getConfig/getRegistration/createMmTelFeature;
-+        // nothing does it for the compat adapters, and every *ImplBase routes its binder calls
-+        // through CompletableFuture.runAsync(..., mExecutor). A null executor there is not a
-+        // fallback to the calling thread -- screenExecutor() throws NPE -- so the first framework
-+        // call (ImsProvisioningController -> ImsConfig#addConfigCallback) kills com.android.phone
-+        // and it restart-loops as soon as a compat ImsService is bound.
-+        mmTelAdapter.setDefaultExecutor(mExecutor);
-+        regAdapter.setDefaultExecutor(mExecutor);
-+        configAdapter.setDefaultExecutor(mExecutor);
++        // Every *ImplBase routes its binder calls through
++        // CompletableFuture.runAsync(.., executor).join(). ImsService does the equivalent of this
++        // in getConfig/getRegistration/createMmTelFeature; nothing does it for the compat adapters,
++        // so their executor is null -- and null there is not a fallback to the calling thread,
++        // screenExecutor() throws NPE. The first framework call in (ImsProvisioningController ->
++        // ImsConfig#addConfigCallback) then kills com.android.phone, which restart-loops for as
++        // long as a compat ImsService is bound.
++        //
++        // Run them directly on the calling binder thread, which is both what these adapters were
++        // written for (they predate the executor) and what ImsService falls back to when an
++        // implementation does not override getExecutor(). Do NOT hand them this controller's
++        // single-threaded mExecutor: changeEnabledCapabilities and queryCapabilityConfiguration
++        // block on a 2s CountDownLatch per capability, and sharing one thread across the three
++        // adapters would queue call setup (createCallSession, getPendingCallSession for an
++        // incoming call) behind up to several of those -- long enough for the network to cancel
++        // an incoming INVITE.
++        final Executor directExecutor = Runnable::run;
++        mmTelAdapter.setDefaultExecutor(directExecutor);
++        regAdapter.setDefaultExecutor(directExecutor);
++        configAdapter.setDefaultExecutor(directExecutor);
          return mmTelAdapter.getBinder();
      }
  

@@ -694,7 +694,13 @@ calls through it. Shipped as device patch 0036 (`ims/bridge/`, `ims/ims.mk`,
   restart-loops as soon as the bridge binds. Verified on hardware 2026-10-05 by pushing the bridge
   onto the A3 build. The modern path is unaffected (`ImsService#getConfig/getRegistration/
   createMmTelFeature` each set it) -- the compat path has been deprecated since P and nothing in
-  tree exercises it.
+  tree exercises it. Give the adapters a DIRECT executor, not the controller's single-threaded
+  `mExecutor`: `MmTelFeature`'s stub routes every inbound call through
+  `executeMethodAsync(..).join()`, and `changeEnabledCapabilities` /
+  `queryCapabilityConfiguration` block on a 2 s `CountDownLatch` per capability, so one shared
+  thread would queue call setup (`createCallSession`, `getPendingCallSession` for an incoming
+  call) behind several of those -- long enough for the network to cancel the INVITE, which looks
+  exactly like the pre-bridge failure.
 - **MO dialling does not consult the modem's VoPS flag**: `GsmCdmaPhone.useImsForCall()` ->
   `ImsPhone.isVoiceOverCellularImsEnabled()` -> `ImsPhoneCallTracker
   .isImsCapabilityInCacheAvailable(CAPABILITY_TYPE_VOICE, REGISTRATION_TECH_LTE)`, i.e. the
