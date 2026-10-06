@@ -849,16 +849,29 @@ Verified on the Flash B build plus the pushed bridge revisions:
   answers true regardless, and VT needs the media path).
 - **Gate open:** `isVolteEnabled=true` (that log line is `isVoiceOverCellularImsEnabled()` itself),
   `MmTel Capabilities - [Voice: true Video: false]`.
-- **STILL OPEN -- no audio.** The voice path is modem-side; the audio HAL must be handed
-  `vsid=<id>;call_state=<state>` to open it, nothing in AOSP ever sends those keys, and the stock
-  LG telephony framework that used to is what this port replaced. The HAL supports it
-  (`voice_start_call`, `volte-call`, `VOICEMMODE1_VSID 0x11C05000` = the VSID MMPF reports) but only
-  ever saw `update_calls: cur_state=1 new_state=1` from its own stop-all path at teardown --
-  `update_call_states` with `CALL_ACTIVE` (2) never ran. `ModemVoiceSession` in the bridge now sends
-  it off the call-session listener; untested at the time of writing.
-- **STILL OPEN -- one call per boot.** After a call Ims4 issues `MSG_REG_STOP` and goes
-  `STATE_NOTREADY` without re-registering, so nothing rings until a reboot. Possibly a symptom of
-  the media failure; retest once audio works.
+- **Audio works** (2026-10-06 06:43, wifi off so cellular-only): the bridge sends
+  `vsid=297816064;call_state=2` and 182 ms later the HAL runs `update_call_states ... in_call:1,
+  mode:2`, opening the voice path. Nothing in AOSP sends those keys; see `ModemVoiceSession`.
+- **Outgoing AND incoming calls work with two-way audio** (2026-10-06 07:52, back to back on one
+  boot). Two further bugs had to be fixed first, both consequences of the rename-and-merge:
+  - **MO calls died in `createCallSession`** with `BadParcelableException: ClassNotFoundException:
+    com.lge.imslegacy.ImsStreamMediaProfile`. The renamed parcelables' generated `readFromParcel`
+    still passes `null` to `readParcelable` -- the BOOT class loader, correct while they were
+    `com.android.ims` framework classes, useless once they live in the app's dex. It only bites
+    framework -> Ims4, which is why MT always worked and MO failed in half a second. Fixed by
+    redirecting `readParcelable` to a compat static using the app loader (safe: the app loader
+    delegates to the boot one). 9 classes, 12 sites -- LG's own IM/IM3 parcelables had it too.
+    **Check this first in any rename-and-merge port**; it is invisible until something marshals
+    downward.
+  - **One call per boot**: LG's EAB presence agent queried CallLog for `duration_video`, an LG-only
+    column. AOSP's provider throws, `EABAgent` catches nothing on its own thread, and
+    `com.lge.ims` is `persistent`, so the IMS process died after every call and restarted unable to
+    re-register. Stubbed via `ims/smali-stubs.txt` (build-ims4.sh step 4.4).
+- **Known rough edge:** a failed or unanswered call could leave a `DISCONNECTED` call object that is
+  never reaped, so the next incoming call arrives as `WAITING` and telephony sticks at
+  `mRingingCallState=8` -- Telecom then refuses to dial ("Cannot place a call as there is an
+  unanswered incoming call"). Seen while MO calls were failing instantly; recheck now that they do
+  not.
 - **Still open from before:** `service_contexts` for `lgeims_mmpf` and `com.lge.ims.phone` before
   `permissive radio` can go (the `add` succeeds only because radio is permissive, so media dies the
   moment it is enforcing); `setImsStatusToModem` dropped; SMS over IMS needs `imswmsproxy`.

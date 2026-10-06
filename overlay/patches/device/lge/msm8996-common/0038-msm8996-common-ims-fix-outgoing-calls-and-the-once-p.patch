@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 07:53:36 -0400
+Subject: [PATCH] msm8996-common: ims: fix outgoing calls and the once-per-boot
+ crash
+
+Two bugs that only showed once voice audio worked, both consequences of the
+rename-and-merge the port depends on.
+
+Outgoing calls died in createCallSession with
+BadParcelableException: ClassNotFoundException: com.lge.imslegacy.ImsStreamMediaProfile.
+Ims4's parcelables were com.android.ims FRAMEWORK classes, so their generated
+readFromParcel passes null to readParcelable -- 'use the boot class loader' --
+which resolved them. Renaming the package and merging it into the app moved
+those classes into the app's dex, where the boot loader cannot see them. It
+only bites framework -> Ims4, which is why incoming calls always worked and
+dialling out failed instantly. Redirect readParcelable to a compat static using
+the app's loader; that is strictly more capable, since the app loader delegates
+to the boot one, so framework parcelables still resolve. 9 classes, 12 sites --
+LG's own IM/IM3 parcelables carried the same latent bug.
+
+And after every call LG's EAB presence agent queried CallLog for duration_video,
+an LG-only column; AOSP's provider throws, EABAgent catches nothing on its own
+thread, and because com.lge.ims is persistent the whole IMS process died and
+restarted unable to re-register -- exactly one working call per boot. Stub the
+one method to return null, which is already the caller's 'nothing to subscribe'
+branch, via the new build-ims4.sh step 4.4 and ims/smali-stubs.txt. RCS presence
+is parked anyway.
+
+Verified 2026-10-06 07:52: outgoing and incoming calls, both with two-way
+audio, back to back on one boot.
+
+---
+ ims/build-ims4.sh                             |  3 +++
+ .../com/lge/ims/compat/TelephonyCompat.java   | 25 +++++++++++++++++++
+ ims/method-redirects.txt                      |  7 ++++++
+ ims/smali-stubs.txt                           | 11 ++++++++
+ 4 files changed, 46 insertions(+)
+ create mode 100644 ims/smali-stubs.txt
+
+diff --git a/ims/build-ims4.sh b/ims/build-ims4.sh
+index 66e60aed..09c3b7da 100755
+--- a/ims/build-ims4.sh
++++ b/ims/build-ims4.sh
+@@ -107,6 +107,9 @@ echo "   $nreal real parcelable classes from the stock framework"
+ echo ">> 4. rename com.android.ims -> com.lge.imslegacy in Ims4 + merge the legacy closure"
+ python3 "$FORGE/tools/merge-legacy-classes.py" --app "$T/smali-ims4" --legacy "$T/legacy-final" --old com/android/ims --new com/lge/imslegacy --out "$T/merged"
+ 
++echo ">> 4.4 stub methods that depend on OEM-only framework features"
++[ -f "$HERE/smali-stubs.txt" ] && python3 "$FORGE/tools/stub-smali-method.py" "$T/merged" "$HERE/smali-stubs.txt"
++
+ echo ">> 4.5 apply framework-API-drift method redirects"
+ [ -f "$HERE/method-redirects.txt" ] && python3 "$FORGE/tools/apply-method-redirects.py" "$HERE/method-redirects.txt" "$T/merged"
+ if [ -f "$HERE/smali-fixups.py" ]; then
+diff --git a/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java b/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java
+index fbb71c4e..23394dd1 100644
+--- a/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java
++++ b/ims/compat-java/com/lge/ims/compat/TelephonyCompat.java
+@@ -204,4 +204,29 @@ public final class TelephonyCompat {
+             return null;
+         }
+     }
++
++    /**
++     * Parcel.readParcelable with the app's class loader instead of the caller's.
++     *
++     * Ims4's parcelables were com.android.ims.* FRAMEWORK classes, so its generated readFromParcel
++     * passes null -- "use the boot class loader" -- and that resolved them. Renaming the package to
++     * com.lge.imslegacy and merging it into the app moved those classes into the app's dex, where
++     * the boot loader cannot see them, so every readParcelable(null) throws
++     * BadParcelableException: ClassNotFoundException. It only bites in the framework -> Ims4
++     * direction (an outgoing call's ImsCallProfile carries an ImsStreamMediaProfile), which is why
++     * incoming calls worked and dialling out failed with createCallSession().
++     *
++     * Redirecting every call is safe and strictly more capable: the app loader delegates to the
++     * boot loader, so framework parcelables still resolve.
++     */
++    public static android.os.Parcelable readParcelable(android.os.Parcel in,
++            ClassLoader ignoredCallerLoader) {
++        return in.readParcelable(TelephonyCompat.class.getClassLoader());
++    }
++
++    /** Same reasoning as readParcelable, for the Bundle variant. */
++    public static android.os.Bundle readBundle(android.os.Parcel in,
++            ClassLoader ignoredCallerLoader) {
++        return in.readBundle(TelephonyCompat.class.getClassLoader());
++    }
+ }
+diff --git a/ims/method-redirects.txt b/ims/method-redirects.txt
+index 77291dd1..367e0031 100644
+--- a/ims/method-redirects.txt
++++ b/ims/method-redirects.txt
+@@ -43,3 +43,10 @@ Lcom/android/internal/telephony/ITelephonyRegistry;->notifyVoLteServiceStateChan
+ # --- com.lge.ims.phone (IIMSPhone) is not a service on AOSP: hand Ims4 an in-process stand-in ---
+ # IIMSPhoneGov.bindIMSPhone() -> ImsPhoneCompat; item 8 (VoPS) is what clears AoS NONETWORK+VOPS
+ Lcom/android/internal/telephony/IIMSPhone$Stub;->asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/IIMSPhone;|Lcom/lge/ims/compat/ImsPhoneCompat;->asInterface(Landroid/os/IBinder;)Lcom/android/internal/telephony/IIMSPhone;
++
++# The renamed com.lge.imslegacy parcelables are app classes now, but their generated readFromParcel
++# still passes null (the boot loader) because they used to be framework classes. Every one of those
++# reads throws ClassNotFoundException -- outgoing calls failed in createCallSession() unmarshalling
++# an ImsCallProfile's ImsStreamMediaProfile. The compat statics use the app loader, which delegates
++# to the boot loader, so framework parcelables still resolve.
++Landroid/os/Parcel;->readParcelable(Ljava/lang/ClassLoader;)Landroid/os/Parcelable;|static Lcom/lge/ims/compat/TelephonyCompat;->readParcelable(Landroid/os/Parcel;Ljava/lang/ClassLoader;)Landroid/os/Parcelable;
+diff --git a/ims/smali-stubs.txt b/ims/smali-stubs.txt
+new file mode 100644
+index 00000000..6e8caf61
+--- /dev/null
++++ b/ims/smali-stubs.txt
+@@ -0,0 +1,11 @@
++# Methods in Ims4 that reach for something LG's framework had and AOSP does not. Applied by
++# build-ims4.sh with forge/tools/stub-smali-method.py; the return value is chosen from the CALLER's
++# harmless branch, not from the signature. A rule that stops matching is a build failure.
++
++# After every call the EAB (RCS presence) agent reacts to the call-log update and queries CallLog
++# for `duration_video`, an LG-only column. AOSP's provider throws IllegalArgumentException, EABAgent
++# catches nothing on its own thread, and because com.lge.ims is persistent the whole IMS process
++# dies and restarts unable to re-register -- exactly one working call per boot. The caller does
++# `if-eqz v2, :cond_87`, so null is already its "nothing to subscribe" path, and RCS presence is
++# parked anyway (see IMS.md "RCS").
++Lcom/lge/ims/service/eab/EABContactHelper;->CheckLastCallCapability()Ljava/lang/String;|null
