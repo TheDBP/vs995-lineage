@@ -867,11 +867,31 @@ Verified on the Flash B build plus the pushed bridge revisions:
     column. AOSP's provider throws, `EABAgent` catches nothing on its own thread, and
     `com.lge.ims` is `persistent`, so the IMS process died after every call and restarted unable to
     re-register. Stubbed via `ims/smali-stubs.txt` (build-ims4.sh step 4.4).
-- **Known rough edge:** a failed or unanswered call could leave a `DISCONNECTED` call object that is
-  never reaped, so the next incoming call arrives as `WAITING` and telephony sticks at
-  `mRingingCallState=8` -- Telecom then refuses to dial ("Cannot place a call as there is an
-  unanswered incoming call"). Seen while MO calls were failing instantly; recheck now that they do
-  not.
+- **DIAGNOSED (2026-10-06), not yet fixed: an unanswered incoming call rings forever.** Caught in
+  the act on the GApps build -- a real call arrived 12:06:55, the caller gave up, and the handset
+  was still `RINGING` and driving the vibrator ten minutes later, with Telecom refusing to dial
+  ("Cannot place a call as there is an unanswered incoming call"). This is the same rough edge
+  previously filed as an unreaped `DISCONNECTED` object; the real mechanism is:
+
+  Ims4 reports a remote hangup on a call that was never answered as `callSessionStartFailed`, not
+  `callSessionTerminated` -- its own model is that the session never started. The bridge forwards
+  it faithfully, and AOSP's `ImsPhoneCallTracker.onCallStartFailed` only unwinds `mPendingMO` (plus
+  a `findConnection` branch gated on `DomainSelectionResolver.isDomainSelectionSupported()`, which
+  is off here). On an MT call `mPendingMO` is null, so the handler does nothing at all and the
+  ringing connection is never disconnected. Telecom's own `CallAnomalyWatchdog` notices after 2
+  minutes and reports "caught and disconnected a stuck/zombie call", but the call survives that too.
+
+  The log signature is one line: `ImsPhoneCallTracker: onCallStartFailed reasonCode=510`
+  (`CODE_USER_TERMINATED_BY_REMOTE`) on a call that is ringing rather than dialling. A correct
+  teardown reads `onCallTerminated`. LG's own layer logs the truth just above it
+  (`UCCallManager ... onCallTerminated :: An active call is terminated`), so the information is
+  there -- only the callback it is delivered on is wrong.
+
+  **Fix:** in `CallSessionListenerAdapter.callSessionStartFailed`, forward MT sessions as
+  `callSessionTerminated` and leave MO sessions alone (MO genuinely needs `startFailed`, which is
+  what drives CSFB retry). Needs the wrapper to carry whether the session came from
+  `createCallSession` (MO) or was adopted from an incoming-call intent (MT). Untested -- it touches
+  the working call path, so it wants a real call either side of it.
 - **SMS over IMS: AP side works, modem side does not** (tested 2026-10-06 without a build, by
   pushing stock `imswmsproxy` + the 64-bit `libqmi_wms_client_helper.so` and running it by hand).
   Ims4's SMS client reached `Update SoI Service Mode :: STATE_READY` for the first time -- it had
@@ -919,10 +939,9 @@ Verified on the Flash B build plus the pushed bridge revisions:
   cannot show this class of bug, because whitelist mode does not exist until the rule does: budget
   an enforcing boot. See rom-forge GOTCHAS 38.
 - **Still open:** `setImsStatusToModem` is logged and dropped (if the modem keeps CSFB routing, that
-  is the next hook); SMS over IMS needs the modem to accept the QMI WMS transport (above); and a
-  failed or unanswered call may still leave a `DISCONNECTED` call object unreaped, which wedges the
-  dialer with "Cannot place a call as there is an unanswered incoming call" -- seen while MO calls
-  were failing instantly, not re-tested since they stopped.
+  is the next hook); SMS over IMS needs the modem to accept the QMI WMS transport (above); and an unanswered
+  incoming call rings forever because Ims4 reports the remote hangup as `startFailed` (diagnosed
+  above, one-line fix in the bridge, untested).
 
 ## Two user-visible warts on the GApps build (2026-10-06)
 
