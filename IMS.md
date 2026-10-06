@@ -865,8 +865,11 @@ Verified on the Flash B build plus the pushed bridge revisions:
 
 ## RCS: PARKED (2026-10-06) -- try GApps/Messages first, port LG's RCS only if that fails
 
-**Decision:** do not port LG's RCS unless Google Messages fails to provide it. Rationale below; the
-mapping notes that follow are kept only so a future attempt does not restart from zero.
+**Decision (2026-10-06): not doing it.** Too much work for too little -- a second bridge larger than
+the first, against ~500 classes of undocumented proprietary interfaces, with no AOSP adapter layer
+to plug into, living inside a `persistent` process where any crash kills voice. Use GApps/Messages
+for RCS instead. The mapping notes below are kept only so that a future attempt, if anyone ever
+wants one, does not restart from zero -- they are not a plan of record.
 
 Google Messages does RCS over **Jibe Cloud** on plain data, not through the carrier IMS stack, and
 T-Mobile (so Mint) migrated to Jibe -- so on this SIM Chat features should work with GApps and the
