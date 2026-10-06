@@ -142,10 +142,12 @@ auto-brightness curve, and an interactive-governor retune (table below).
 
 ## Flash it
 
-Prebuilt images are on the [Releases](https://github.com/TheDBP/vs995-lineage/releases) page —
-always the `libre` preset: LineageOS plus F-Droid, K-9 Mail, KDE Connect and ConnectBot, no Google
-apps, not rooted. Each release is two files: the ROM zip and a `<name>-recovery.img` (Lineage
-recovery from the same build).
+Prebuilt images, when there are any, are on the
+[Releases](https://github.com/TheDBP/vs995-lineage/releases) page — always the `libre` preset:
+LineageOS plus F-Droid, K-9 Mail, KDE Connect and ConnectBot, no Google apps, not rooted. Each
+release is two files: the ROM zip and a `<name>-recovery.img` (Lineage recovery from the same
+build). A published image always carries VoLTE; a `-novolte` build is something you get by building
+without the stock firmware, not something that is released.
 
 See **[FLASHING.md](FLASHING.md)**. This is a V20 — the bootloader unlock path differs by carrier
 model, and `vs995` is the Verizon variant. Do not follow `h918` or `us996` guides.
