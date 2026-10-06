@@ -23,16 +23,25 @@ adb reboot bootloader
 fastboot flash recovery recovery.img # the built one, not TWRP: matches the ROM's encryption
 fastboot reboot                      # `fastboot boot recovery.img` is refused (unsigned image)
 # wait for Android, then go to sideload FROM SYSTEM -- not from recovery:
-adb reboot sideload
+adb reboot sideload-auto-reboot
 adb sideload lineage-24.0-*-vs995.zip
-adb reboot
+# recovery installs and reboots itself; no further command
 ```
 
-**Go to sideload from system, not from recovery.** `adb reboot sideload` issued while already in
-recovery stalls at the bootloader's factory-reset prompt, which shows no USB at all, so the phone
-looks dead until someone presses keys. From a booted system it goes straight there. If you do end
-up at that prompt: **Power + Volume Down**, release Power at the LG logo for a second and press it
-again, then answer **Yes** twice (Lineage recovery boots instead of wiping).
+Two things about that, both learned the hard way:
+
+**Go to sideload from a booted system, not from recovery.** From system it arrives in about 50 s
+with no interaction. `adb reboot sideload` issued while *already in recovery* stalls at the
+bootloader's factory-reset prompt, which shows no USB at all, so the phone looks dead. If you land
+there: **Power + Volume Down**, release Power at the LG logo for a second and press it again, then
+answer **Yes** twice (Lineage recovery boots instead of wiping).
+
+**Use `sideload-auto-reboot`, so you never have to leave sideload by hand.** Plain `--sideload`
+returns to the recovery menu when the install finishes, and `adb reboot` issued while sideload is
+still active does not take -- the phone sits on the sideload screen until someone picks Cancel on
+the device, which itself triggers the reboot. `sideload_auto_reboot` makes recovery reboot into the
+new build on its own, which is the difference between a flash you can run unattended and one that
+needs a hand at the end.
 
 A dirty flash (no wipe) is fine between builds of this ROM. To wipe, do it from recovery *after*
 sideloading, not before: Factory reset -> Format data.
