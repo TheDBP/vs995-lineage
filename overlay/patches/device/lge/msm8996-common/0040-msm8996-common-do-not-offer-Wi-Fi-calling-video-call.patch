@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Tue, 6 Oct 2026 09:55:16 -0400
+Date: Tue, 6 Oct 2026 12:11:28 -0400
 Subject: [PATCH] msm8996-common: do not offer Wi-Fi calling, video calling or
  satellite
 
@@ -15,12 +15,21 @@ defaults still declare per-provider services, so SIM settings renders a
 Satellite section and then withdraws it when the capability check returns, a
 visible flash on every visit.
 
+The CarrierConfig keys alone are not enough. ImsManager.isVtEnabledByPlatform()
+and isWfcEnabledByPlatform() short-circuit to true when persist.dbg.vt_avail_ovr
+or persist.dbg.wfc_avail_ovr is 1, without ever reading the key; Settings asks
+via ImsMmTelManager.isSupported(), so both rows kept appearing with the keys
+already false. Those are persist properties, so with nothing in the tree their
+value is whatever some earlier boot happened to write to /data. Pin all three
+instead of leaving them to chance.
+
 No mcc/mnc filter on any of them: these are device limitations, not carrier
 ones. Re-enable per feature if any is ever made to work.
 
 ---
  .../CarrierConfigOverlay/res/xml/vendor.xml   | 19 +++++++++++++++++++
- 1 file changed, 19 insertions(+)
+ vendor_prop.mk                                | 10 ++++++++++
+ 2 files changed, 29 insertions(+)
 
 diff --git a/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml b/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
 index d28cf9e1..2963f670 100644
@@ -52,3 +61,24 @@ index d28cf9e1..2963f670 100644
      <!-- Below are some sample filters for various scenarios.
           You can have multiple carrier_config blocks.
           blocks for various filters. For more info visit DefaultCarrierConfigService.java
+diff --git a/vendor_prop.mk b/vendor_prop.mk
+index ab53f320..402dbc24 100644
+--- a/vendor_prop.mk
++++ b/vendor_prop.mk
+@@ -152,6 +152,16 @@ PRODUCT_PROPERTY_OVERRIDES += \
+ PRODUCT_PRODUCT_OVERRIDES += \
+     ro.telephony.block_binder_thread_on_incoming_calls=false
+ 
++# ImsManager.is{Volte,Vt,Wfc}EnabledByPlatform() return true outright when their override property
++# is 1, before reading config_device_*_available or the CarrierConfig key. Left unset, these are
++# whatever a previous boot wrote to /data/property, so state the intent here instead: VoLTE forced
++# available because this device does it (see IMS.md), VT and WFC pinned off so they fall through to
++# the CarrierConfig keys this device's RRO sets false. Any value but 1 is "no override".
++PRODUCT_PROPERTY_OVERRIDES += \
++    persist.dbg.volte_avail_ovr=1 \
++    persist.dbg.vt_avail_ovr=0 \
++    persist.dbg.wfc_avail_ovr=0
++
+ # LMKD
+ PRODUCT_PROPERTY_OVERRIDES += \
+     ro.lmk.low=1001 \

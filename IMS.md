@@ -924,6 +924,32 @@ Verified on the Flash B build plus the pushed bridge revisions:
   dialer with "Cannot place a call as there is an unanswered incoming call" -- seen while MO calls
   were failing instantly, not re-tested since they stopped.
 
+## Two user-visible warts on the GApps build (2026-10-06)
+
+- **Hiding WFC/VT takes a property, not just the CarrierConfig key.** A17 Settings decides whether
+  to draw the `Calling` rows from `ImsMmTelManager.isSupported()`, which lands in
+  `ImsManager.isVtEnabledByPlatform()` / `isWfcEnabledByPlatform()`. Each returns true OUTRIGHT when
+  `persist.dbg.vt_avail_ovr` / `persist.dbg.wfc_avail_ovr` is 1, before it reads
+  `config_device_*_available` or the carrier key -- so `carrier_vt_available_bool=false` and
+  `carrier_wfc_ims_available_bool=false` read back correctly in `dumpsys carrier_config` while both
+  rows stayed on screen. These are `persist.` properties: with nothing in the tree their value is
+  whatever an earlier boot wrote to `/data/property`, which is how a bring-up `setprop` survived
+  every later flash. `vendor_prop.mk` now pins all three (volte=1, vt=0, wfc=0). Note the order:
+  `/data/property` is loaded after `build.prop`, so the tree value does NOT win on a handset that
+  already has a stale one -- `setprop persist.dbg.vt_avail_ovr 0` to correct it in place.
+
+  Confirm from logcat rather than from the carrier config:
+  `ImsMmTelRepository: [1] isSupported(capability=2,transportType=1)` is VT/WWAN,
+  `(capability=1,transportType=2)` is voice/WLAN i.e. WFC. `false` on both = rows gone.
+
+- **"Phone Services isn't compatible with the latest version of Android."** A17's
+  `DeprecatedAbiDialog`, shown whenever a `com.android.phone` activity starts (call settings,
+  `RadioInfo`); dialling never triggers it. `com.lge.ims` declares `android.uid.phone`, PackageManager
+  resolves ONE ABI per shared UID, and the IMS stack is 32-bit only (LG's SIP libs, and
+  `libimscompat` is `compile_multilib: "32"`), so `com.android.phone` is dragged to
+  `primaryCpuAbi=armeabi-v7a`. Cosmetic, and the price of the shared UID the port depends on --
+  the alternative is giving `com.lge.ims` its own UID, which breaks its access to the radio.
+
 ## RCS: PARKED (2026-10-06) -- try GApps/Messages first, port LG's RCS only if that fails
 
 **Decision (2026-10-06): not doing it.** Too much work for too little -- a second bridge larger than

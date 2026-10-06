@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: TheDBP <TheDBP@users.noreply.github.com>
-Date: Tue, 6 Oct 2026 09:55:16 -0400
+Date: Tue, 6 Oct 2026 12:12:01 -0400
 Subject: [PATCH] msm8996-common: give auto-brightness a curve
 
 config_automatic_brightness_available is true, but nothing supplied a curve:

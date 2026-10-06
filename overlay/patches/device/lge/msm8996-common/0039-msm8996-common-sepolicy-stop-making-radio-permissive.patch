@@ -25,7 +25,6 @@ enforcing.
 
 The IPsec helpers already spelled out their radio-side rules, so only their
 stale 'radio is permissive' comment needed correcting.
-
 ---
  sepolicy/private/ims.te            | 36 +++++++++++++++++++++++++-----
  sepolicy/private/lge_ims_ipsec.te  |  4 ++--
