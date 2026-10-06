@@ -1052,6 +1052,28 @@ Verified on the Flash B build plus the pushed bridge revisions:
   Until then SMS stays on the circuit-switched path, which works and which the user has verified
   both ways.
 
+  **The GID theory is refuted, conclusively** (2026-10-06). `sec_config` grants WMS (service 5) to
+  GID 1001 only, and the daemon had only ever been tested as root -- an obvious suspect. It is not
+  the cause. Run with stock's exact credentials (`Gid: 1001`, groups `1001,1000,3004,3005`, via a
+  freestanding setgid wrapper) the failure is byte-identical to the root run:
+  `srvc_init_client - client=-1, qmi_err_code=0`. Do not spend time here again.
+
+  **How to test this in ten seconds instead of rebooting.** `InitWmsService` has exactly one caller:
+  message id **1** on the abstract socket `@/tmp/ims/wms/wms_proxy`. The daemon is a select/recvfrom
+  loop; each datagram is 524 bytes, the first u32 is the id, bounds-checked 1-12 and dispatched
+  through a jump table at 0x272c (1 InitWmsService, 5 UpdateServiceStatus -- the one Ims4 sends most
+  and the reason earlier runs looked inconsistent). So a 30-line AF_UNIX/SOCK_DGRAM sender that
+  writes 524 bytes with the first u32 = 1 drives the whole QMI path on demand, with no reboot and no
+  dependence on Ims4's timing. Note `Modem is initialized; handle=%d` is logged from TWO sites --
+  daemon startup and inside InitWmsService -- so seeing it does not mean the QMI path ran.
+
+  **Where it actually fails:** inside `qmi_client_init_instance` (QCCI), which returns non-zero with
+  `qmi_err_code=0` -- no QMI transaction took place. Nothing is refusing it; it cannot reach the
+  service. The next probe is a ~40-line standalone QCCI client linked against the device's own
+  `libqmi_cci.so` + `libqmiservices.so` that calls `wms_get_service_object_internal_v01` then
+  `qmi_client_init_instance` and prints the rc. That answers the one remaining question -- can ANY
+  process on this ROM get a WMS client over QCCI -- without LG's daemon in the picture at all.
+
   Ordering note for whoever retries: Ims4 asks once. It sends `IMSConnected` to the proxy ~59 s
   after `sys.boot_completed` and never retries, so a hand-started proxy has to be up *and*
   modem-connected before that. Started earlier than ~boot+25 s the modem is not ready and the QMI
