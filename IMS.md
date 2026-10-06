@@ -654,6 +654,13 @@ Open, next:
 
 ## Flash B (ImsBridge): framework <-> Ims4, design and what to verify
 
+> Design as written before hardware. For what actually happened see "Flash B on hardware" below;
+> two things here needed correcting on the device -- the bitmap probe has to run when registration
+> CONNECTS rather than at `startSession`, and `isConnected(NORMAL, VOICE)` cannot be trusted as the
+> voice indicator. The `dumpsys telephony.registry` check in "Verify on hardware" is also not the
+> one to use: read `isVolteEnabled=` in the `ImsPhoneCallTracker` log instead, which is
+> `isVoiceOverCellularImsEnabled()` itself.
+
 Goal: the A17 telephony stack sees Ims4's registration and routes MO/MT voice
 calls through it. Shipped as device patch 0036 (`ims/bridge/`, `ims/ims.mk`,
 `build-ims4.sh` steps 2.7 + 3.5, Telephony overlay `config_ims_mmtel_package`).
@@ -762,17 +769,20 @@ Also measured, and it is an AP-side config gap of the familiar kind:
 LG's stack expects LG's RIL to tell it the IMS PDN profile number; with a non-LG RIL it asks the
 modem about profile -1.
 
-**Why this is probably not what blocks audio:** the IMS PDN is up and healthy on the AP side. The
-framework reports APN `ims` CONNECTED over LTE on `rmnet_data2` with a global IPv6 LinkAddress and
-the P-CSCF addresses populated -- the same interface SIP and the IPsec SAs already use. That is a
-real local address for `AudioProfileConfigurer`'s fallback to put in `c=`/`o=`. Open question stays
-whether LG's media binds RTP to it correctly, not whether an address exists.
+**WRONG CALL, corrected 2026-10-06 -- this WAS what blocked audio.** The reasoning below was that
+the IMS PDN is up AP-side (APN `ims` CONNECTED over LTE on its own `rmnet_data*` with a global IPv6
+address and the P-CSCF list), so `AudioProfileConfigurer` has a real local address to fall back to
+for `c=`/`o=` and the modem query looked like a cosmetic failure. The SDP part of that is true and
+the fallback does work. What it missed is that **the same QMI service also creates the modem's media
+session** (`MMPF_CP_IF::createMediaSession`), and on this SoC the modem is what carries the voice.
+So the failure was never about the address at all: with no modem session there was no RTP, the
+framework's 5 s RTP-inactivity threshold killed every answered call after ~20 s, and Ims4 then went
+`STATE_NOTREADY`. Fixed by the sec_config rule below. Lesson kept deliberately: a failing call into
+the modem is not cosmetic just because the data it fetches has a fallback -- check what else rides
+on the same transport.
 
-To try after the bridge works, in this order:
-1. `setprop persist.lg.data.iwlan.ipsec.ap 1` -- skips the doomed query (single caller, read per
-   call), reaching the same fallback ~3.3 s sooner. Make it a build property only if it measures.
-2. If audio is one-way or silent, capture `MMPF` during the call and look at the RTP socket bind,
-   not at these errors.
+`setprop persist.lg.data.iwlan.ipsec.ap 1` (skips the query, single caller, read per call) is
+therefore NOT wanted: the query must succeed, not be skipped.
 
 `lgeims_mmpf` **is** published (`avc: denied { add } ... name=lgeims_mmpf` from the IMS app,
 permissive) -- so it needs a `service_contexts` entry before `permissive radio` can be removed, or
@@ -786,6 +796,72 @@ empty; that is the check lying, not the service missing.
   MSG = 0x60c` with no `MMPF_OnIndFromCP` means the modem never answered.
   Also read the existing `UpdateModemIPv6() - PDP profile : %d` line: profile `-1` is an AP-side
   config gap.
+
+## SOLVED: QMI service 703 had no IPC-router rule (2026-10-06)
+
+Root cause of "calls connect, no audio, then drop themselves". The kernel said it plainly, and
+`dmesg` is the only place it is unambiguous:
+
+```
+IPC_RTR: msm_ipc_router_send_to: permission failure for Framework
+IPC_RTR: msm_ipc_router_sendmsg: Send_to failure -1
+```
+
+The MSM IPC router gates every QMI service by GID from `sec_config`, and a service with **no rule**
+is reachable only by root. `configs/permissions/sec_config` (ours, installed by `msm8996.mk` and fed
+to `irsc_util` by `rootdir/etc/init.qcom.rc`) granted services 1-511, 704 and 4097 -- and omitted
+**703**, the `lge_ims` service LG's own IMS stack needs. com.lge.ims runs as radio, so every
+`0x060C` was denied.
+
+Fixed in patch `msm8996-common: sec_config: allow QMI service 703 (lge_ims)`:
+`703:4294967295:1000:1001:3004`. After it:
+`AudioAdaptor::GetIPAddrOfCP() - Getting success`, `UpdateModemIPv6() - Updated IP for APNName[ims]`,
+`nIsIPv6` 1 instead of -1, the audio media session reaches **LIVE**, and an answered call stays up
+until someone hangs up (`onCallTerminated reasonCode=501 CODE_USER_TERMINATED`) instead of dying at
+~20 s. RTP is arriving: Ims4's own monitor (`bRTPMonitoring TRUE`, 5 s threshold) never fires.
+
+**Ordering trap that cost a cycle:** the router binds a rule to a service when the service
+REGISTERS. Running `irsc_util -f <file>` by hand after boot changed nothing, which made a correct
+fix look wrong. The rule has to be in the file init feeds before the modem comes up. Check any
+device with `forge/tools/qmi-sec-check.sh`.
+
+`PDP profile : -1` is a separate, still-open AP-side gap (LG expects LG's RIL to supply the IMS PDN
+profile number) and does not stop the query succeeding.
+
+## Flash B on hardware: what works, and the one thing left (2026-10-06)
+
+Verified on the Flash B build plus the pushed bridge revisions:
+
+- **An incoming VoLTE call rings, answers, stays up and tears down cleanly.** `processIncomingCall`
+  -> `RINGING` -> `OFFHOOK`/`ACTIVE` -> `onCallTerminated` -> `IDLE`, with caller ID populated
+  (proof the real 51-field `ImsCallProfile` marshals; a stubbed one arrives with no number).
+  Longest call 77 s, ended by the user.
+- **Bridge bugs found on hardware and fixed** (all now in `forge/templates/ims-bridge`):
+  probe the capability bitmap when registration CONNECTS, not at `startSession` -- Ims4 registers
+  ~24 s after the framework opens the session, so the open()-time probe always ran too early and the
+  framework kept `Voice: false` forever; take `isConnected(NORMAL, 0)` (isRegistered) as the voice
+  ground truth, because `isConnected(NORMAL, VOICE)` additionally demands LG UC-layer flags fed by
+  provisioning Ims4 refuses to let us write (`setProvisionedValue ... refused, rc=1`), so it answers
+  false while voice demonstrably works; report `RIL_RADIO_TECHNOLOGY_LTE` when Ims4 reports no tech
+  (it only ever calls `registrationConnected()`), or the dial gate fails; acknowledge
+  `setFeatureValue` ourselves, or each capability change blocks the framework's 2 s latch and
+  toggling one SIM-settings switch ANRs Settings; and do not advertise video (`isConnected(...,4)`
+  answers true regardless, and VT needs the media path).
+- **Gate open:** `isVolteEnabled=true` (that log line is `isVoiceOverCellularImsEnabled()` itself),
+  `MmTel Capabilities - [Voice: true Video: false]`.
+- **STILL OPEN -- no audio.** The voice path is modem-side; the audio HAL must be handed
+  `vsid=<id>;call_state=<state>` to open it, nothing in AOSP ever sends those keys, and the stock
+  LG telephony framework that used to is what this port replaced. The HAL supports it
+  (`voice_start_call`, `volte-call`, `VOICEMMODE1_VSID 0x11C05000` = the VSID MMPF reports) but only
+  ever saw `update_calls: cur_state=1 new_state=1` from its own stop-all path at teardown --
+  `update_call_states` with `CALL_ACTIVE` (2) never ran. `ModemVoiceSession` in the bridge now sends
+  it off the call-session listener; untested at the time of writing.
+- **STILL OPEN -- one call per boot.** After a call Ims4 issues `MSG_REG_STOP` and goes
+  `STATE_NOTREADY` without re-registering, so nothing rings until a reboot. Possibly a symptom of
+  the media failure; retest once audio works.
+- **Still open from before:** `service_contexts` for `lgeims_mmpf` and `com.lge.ims.phone` before
+  `permissive radio` can go (the `add` succeeds only because radio is permissive, so media dies the
+  moment it is enforcing); `setImsStatusToModem` dropped; SMS over IMS needs `imswmsproxy`.
 
 ## RCS: what to revisit after voice works (notes, not yet attempted)
 
