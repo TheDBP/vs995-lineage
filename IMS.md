@@ -1013,12 +1013,24 @@ Verified on the Flash B build plus the pushed bridge revisions:
   **client allocation** fails, and `qmi_err_code=0` says QMI never reported an error, which is what
   you get when the library cannot reach its transport at all rather than being refused by it.
 
-  **Why: the binary speaks legacy QMUX and this ROM has no qmuxd.** `imswmsproxy` links
-  `libqmi_client_qmux.so` + `libqmi.so`, the 2016 QMUX client libraries, which expect a `qmuxd`
-  serving `/dev/socket/qmux_radio` as a socket. On this build that path is a **directory** owned by
-  `qcrild` (holding `qcril_radio_config0/1`), no `qmuxd` binary is shipped, and the data stack is
-  `qcrild` + `netmgrd` + `ipacm` over the IPC router. The hardcoded `rmnet0` is the other half of
-  the same story: the device has `rmnet_data0..7`, and no `rmnet0` at all.
+  **Why: it asks QCCI for the QMUX transport, and nothing serves QMUX here.** The kernel confirms
+  it -- `QMI_FW: QMUXD: WARNING qmi_qmux_if_pwr_up_init failed! rc=-6` -- and
+  `libqmi_client_qmux.so` carries a `qmi_client [%d] QMUXD disabled` path for exactly this. No
+  `qmuxd` is shipped or running; `/dev/socket/qmux_radio` is a **directory** owned by `qcrild`
+  (holding `qcril_radio_config0/1`), and the data stack is `qcrild` + `netmgrd` + `ipacm` talking
+  QMI over the IPC router.
+
+  `rmnet0` is NOT the problem, despite looking like one: it is a QMI **connection id**, not a
+  netdev. `libqmi.so`'s own table lists `rmnet0`..`rmnet7`, and the device having `rmnet_data0..7`
+  interfaces is irrelevant. Checked, because it is the obvious wrong turn here.
+
+  The encouraging part: `libqmi_wms_client_helper.so` is already a **QCCI** client. It imports
+  `qmi_client_init_instance` and `qmi_client_send_raw_msg_sync` -- the modern API qcrild uses -- plus
+  `qmi_cci_qmux_xport_unregister`, i.e. it explicitly drives the QMUX transport under QCCI rather
+  than being written against legacy QMUX throughout. It exports 24 symbols, of which the WMS surface
+  is five: `qmi_wms_srvc_init_client`, `qmi_wms_transport_init`, `qmi_wms_transport_cap_update`,
+  `qmi_wms_transport_nw_reg_status_update`, `qmi_wms_srvc_extract_return_code` (the rest are generic
+  `qmi_util_*` txn/TLV helpers).
 
   **Both earlier leads are wrong, and so was a later one.** It is not the daemon running as root
   instead of `group radio`: as root it gets all the way to the QMI client call, and there are no
@@ -1027,11 +1039,18 @@ Verified on the Flash B build plus the pushed bridge revisions:
   `5:4294967295:1001` granting WMS to radio only is real but irrelevant here; it would matter if the
   transport existed.)
 
-  **What a fix would take**, neither of them small: run a stock `qmuxd` alongside `qcrild` and give
-  it back `/dev/socket/qmux_radio`, which `qcrild` currently owns -- a direct conflict; or re-point
-  the WMS client at the modern QMI path (`libqmi_cci` over the IPC router) and fix the `rmnet0`
-  name, i.e. replace the transport half of `libqmi_wms_client_helper.so`. Until then SMS stays on
-  the circuit-switched path, which works and which the user has verified both ways.
+  **What a fix would take.** The promising route is to rebuild `libqmi_wms_client_helper.so` against
+  QCCI's IPC-router transport instead of its QMUX one, keeping the same five WMS entry points so the
+  stock `imswmsproxy` binary links against it unchanged. The device already ships `libqmi_cci.so`,
+  and qcrild proves the transport works. Scope is one small library, not a transport layer -- but
+  the WMS request/response TLVs it builds have to be reproduced, and that is the unknown.
+
+  The alternative -- shipping a stock `qmuxd` alongside `qcrild` -- collides with `qcrild` over
+  `/dev/socket/qmux_radio`, and LG's own `/system/bin` has no `qmuxd` (only `netmgrd`), so it would
+  have to come out of the stock **vendor** partition, which is not extracted yet.
+
+  Until then SMS stays on the circuit-switched path, which works and which the user has verified
+  both ways.
 
   Ordering note for whoever retries: Ims4 asks once. It sends `IMSConnected` to the proxy ~59 s
   after `sys.boot_completed` and never retries, so a hand-started proxy has to be up *and*
