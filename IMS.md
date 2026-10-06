@@ -886,6 +886,24 @@ Verified on the Flash B build plus the pushed bridge revisions:
   AOSP/QTI RIL may already own the modem's WMS transport, which would refuse a second registration.
   The binary must live in `/vendor/bin`, not `/system/bin` as on stock: it links vendor QMI libs and
   a system-namespace binary cannot see `/vendor/lib64` (pre-Treble stock had no such split).
+
+  Reproduce the staging (artifacts are proprietary, so they live in `.scratch`, never the repo):
+
+  ```
+  I=.scratch/kdz/vs995/parts/system.image
+  debugfs -R 'dump /system/bin/imswmsproxy             <out>/imswmsproxy'              $I
+  debugfs -R 'dump /vendor/lib64/libqmi_wms_client_helper.so <out>/...' $I   # 64-bit: 22480 bytes
+  # /vendor/lib holds a 32-bit namesake (26136 bytes) -- the wrong one fails at link.
+  adb push ... ; cp to /vendor/bin + /vendor/lib64 ; chmod 755/644 ; restorecon
+  adb shell 'setsid nohup /vendor/bin/imswmsproxy >/data/local/tmp/wmsproxy.log 2>&1 &'
+  grep '@/tmp/ims/wms' /proc/net/unix      # wms_proxy present = the chain is live
+  ```
+
+  When it ships: `cc_prebuilt_binary` + an rc (stock: `class main, user system, group radio system
+  net_admin net_raw`) + a sepolicy domain shaped like `lge_ims_ipsec.te`, and
+  `libqmi_wms_client_helper.so` as a vendor prebuilt. Deliberately NOT shipped yet: it would be a
+  daemon that runs, fails `transport_init` and does nothing, and adding an untested component to
+  the flash that also removes `permissive radio` would muddy the attribution if VoLTE regresses.
 - **Still open from before:** `service_contexts` for `lgeims_mmpf` and `com.lge.ims.phone` before
   `permissive radio` can go (the `add` succeeds only because radio is permissive, so media dies the
   moment it is enforcing); `setImsStatusToModem` dropped; SMS over IMS needs `imswmsproxy`.
