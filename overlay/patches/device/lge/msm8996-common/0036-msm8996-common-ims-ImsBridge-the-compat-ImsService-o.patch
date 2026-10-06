@@ -32,7 +32,6 @@ them and REGISTER worked while a call would have arrived with no number.
 Wiring: ImsBridge and the telephony.ims feature xml (without it PhoneGlobals
 never constructs an ImsResolver), config_ims_mmtel_package, and
 ro.telephony.block_binder_thread_on_incoming_calls=false.
-
 ---
  ims/bridge/Android.bp                         |  38 +++
  ims/bridge/AndroidManifest.xml                |  40 +++

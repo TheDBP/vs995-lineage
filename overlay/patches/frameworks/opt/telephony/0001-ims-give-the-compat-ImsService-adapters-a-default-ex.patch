@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 20:55:17 -0400
+Subject: [PATCH] ims: give the compat ImsService adapters a default executor
+
+Binding any compat ImsService (android.telephony.ims.compat.ImsService --
+the path a bridge to an OEM's pre-P com.android.ims stack has to use) kills
+com.android.phone immediately and it restart-loops:
+
+  FATAL EXCEPTION: ImsProvisioningController
+  java.lang.NullPointerException
+    at java.util.concurrent.CompletableFuture.screenExecutor
+    at ImsConfigImplBase$ImsConfigStub.executeMethodAsync
+    at ImsConfigImplBase$ImsConfigStub.addImsConfigCallback
+    at com.android.ims.ImsConfig.addConfigCallback
+    at ImsProvisioningController$MmTelFeatureListener.connectionReady
+
+Every *ImplBase dispatches its binder calls through
+CompletableFuture.runAsync(.., mExecutor), and ImsConfigImplBase's no-arg
+constructor leaves that executor null. The modern path never hits it because
+ImsService#getConfig/getRegistration/createMmTelFeature each call
+setDefaultExecutor() on the stub they return; createMMTelCompat() creates the
+three compat adapters and calls it on none of them. A null executor there is
+not a fall back to the calling thread -- screenExecutor() throws -- so the
+first framework call into the adapter is fatal.
+
+Set it on all three (MmTel feature, registration and config adapters): the
+other two reach the same runAsync and would fail the same way on the next
+call. Found bringing LG's Ims4 up on 24.0; the compat path has been
+deprecated since P and nothing in tree exercises it.
+
+---
+ .../telephony/ims/ImsServiceControllerCompat.java  | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java b/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java
+index 6b9866968c..9ef4a4ffb6 100644
+--- a/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java
++++ b/src/java/com/android/internal/telephony/ims/ImsServiceControllerCompat.java
+@@ -264,8 +264,18 @@ public class ImsServiceControllerCompat extends ImsServiceController {
+         ImsRegistrationCompatAdapter regAdapter = new ImsRegistrationCompatAdapter();
+         mmTelAdapter.addRegistrationAdapter(regAdapter);
+         mRegCompatAdapters.put(slotId, regAdapter);
+-        mConfigCompatAdapters.put(slotId, new ImsConfigCompatAdapter(
+-                mmTelAdapter.getOldConfigInterface()));
++        ImsConfigCompatAdapter configAdapter = new ImsConfigCompatAdapter(
++                mmTelAdapter.getOldConfigInterface());
++        mConfigCompatAdapters.put(slotId, configAdapter);
++        // The modern path does this in ImsService#getConfig/getRegistration/createMmTelFeature;
++        // nothing does it for the compat adapters, and every *ImplBase routes its binder calls
++        // through CompletableFuture.runAsync(..., mExecutor). A null executor there is not a
++        // fallback to the calling thread -- screenExecutor() throws NPE -- so the first framework
++        // call (ImsProvisioningController -> ImsConfig#addConfigCallback) kills com.android.phone
++        // and it restart-loops as soon as a compat ImsService is bound.
++        mmTelAdapter.setDefaultExecutor(mExecutor);
++        regAdapter.setDefaultExecutor(mExecutor);
++        configAdapter.setDefaultExecutor(mExecutor);
+         return mmTelAdapter.getBinder();
+     }
+ 
