@@ -904,9 +904,25 @@ Verified on the Flash B build plus the pushed bridge revisions:
   `libqmi_wms_client_helper.so` as a vendor prebuilt. Deliberately NOT shipped yet: it would be a
   daemon that runs, fails `transport_init` and does nothing, and adding an untested component to
   the flash that also removes `permissive radio` would muddy the attribution if VoLTE regresses.
-- **Still open from before:** `service_contexts` for `lgeims_mmpf` and `com.lge.ims.phone` before
-  `permissive radio` can go (the `add` succeeds only because radio is permissive, so media dies the
-  moment it is enforcing); `setImsStatusToModem` dropped; SMS over IMS needs `imswmsproxy`.
+- **DONE: runs enforcing** (2026-10-06, patch `sepolicy: stop making radio permissive`). No
+  permissive domains at all, and zero `permissive=0` denials in the radio domain on a boot that
+  registers. `lgeims_mmpf`, `com.lge.ims.phone` and `com.lge.ims.rcs.media` have service types and
+  a `service_contexts`; `net.ims.*`/`persist.lg.ims.*` get a `system_internal_prop` type because a
+  coredomain may only set a `system_property_type`.
+
+  **The trap that cost a flash**, worth reading before touching this: the audit from a permissive
+  boot showed ioctl `0xc304` on the QMI socket, so the first rule named only that. Adding ANY
+  `allowxperm` switches that domain/class to whitelist mode, so every other ioctl became denied --
+  including `0xc302`, which the same QMI path uses. Calls still connected, registration still
+  worked, and audio was silent, because the denied ioctl broke `GetIPAddrOfCP` and with it the
+  modem's voice session. Now `0xc300-0xc30f`, the whole IPC-router family. A permissive audit
+  cannot show this class of bug, because whitelist mode does not exist until the rule does: budget
+  an enforcing boot. See rom-forge GOTCHAS 38.
+- **Still open:** `setImsStatusToModem` is logged and dropped (if the modem keeps CSFB routing, that
+  is the next hook); SMS over IMS needs the modem to accept the QMI WMS transport (above); and a
+  failed or unanswered call may still leave a `DISCONNECTED` call object unreaped, which wedges the
+  dialer with "Cannot place a call as there is an unanswered incoming call" -- seen while MO calls
+  were failing instantly, not re-tested since they stopped.
 
 ## RCS: PARKED (2026-10-06) -- try GApps/Messages first, port LG's RCS only if that fails
 

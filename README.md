@@ -21,7 +21,8 @@ claimed.
 - **Mobile data on a DirtySanta-unlocked handset** — the engineering bootloader leaves a flag the
   modem reads as "factory cable attached" and refuses every data call, on any ROM including the
   official nightly. A kernel patch clears it.
-- **Boots enforcing** on a device tree that needed thirteen separate fixes to get there.
+- **Boots enforcing** on a device tree that needed thirteen separate fixes to get there, with no
+  permissive domains: the IMS stack runs under real policy rather than the usual bring-up exemption.
 
 ### What does not work
 
@@ -31,6 +32,9 @@ claimed.
   and WFC needs an ePDG tunnel that is not ported. Both are hidden rather than left to fail.
 - **RCS** is not provided by the IMS stack. Google Messages does RCS over its own backend on plain
   data, so a `full` build is the way to get it.
+- **`full` builds carry MindTheGapps only** (Play Store, GMS, services framework). NikGapps has no
+  Android 17 release, so Google's replacements for the stock apps are not preinstalled -- install
+  them from Play. `device.conf` says to drop `WITH_GAPPS_EXTRAS=false` when that changes.
 
 ## Build it
 
@@ -81,7 +85,7 @@ useful when a build does not reach the lock screen, and not something to ship to
 
 ## Device patches
 
-71 patches across 15 upstream projects, applied at build time from `overlay/patches/`. Nothing here
+72 patches across 15 upstream projects, applied at build time from `overlay/patches/`. Nothing here
 is a fork: each is a single commit against the upstream tree, replayed on every build, so upstream
 stays upstream and what we changed stays legible. One patch per thing it enables.
 
@@ -106,10 +110,11 @@ what they can and carry on instead.
 
 ### VoLTE (`device/lge/msm8996-common`, `frameworks/opt/telephony`)
 
-The large one — fifteen patches bringing LG's 2016 `Ims4` up on Android 17, plus an `ImsBridge` that
-presents it to the modern telephony stack, the IPsec helpers its SIP registration needs, a QMI
-service rule without which calls have no audio, and one genuine AOSP bug fix (the compat
-`ImsService` path crashes the phone process). **[IMS.md](IMS.md)** is the full account.
+The large one — sixteen patches bringing LG's 2016 `Ims4` up on Android 17, plus an `ImsBridge`
+that presents it to the modern telephony stack, the IPsec helpers its SIP registration needs, a QMI
+service rule without which calls have no audio, the sepolicy that lets all of it run enforcing, and
+one genuine AOSP bug fix (the compat `ImsService` path crashes the phone process).
+**[IMS.md](IMS.md)** is the full account.
 
 ### Display and feel
 
