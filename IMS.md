@@ -863,10 +863,47 @@ Verified on the Flash B build plus the pushed bridge revisions:
   `permissive radio` can go (the `add` succeeds only because radio is permissive, so media dies the
   moment it is enforcing); `setImsStatusToModem` dropped; SMS over IMS needs `imswmsproxy`.
 
-## RCS: what to revisit after voice works (notes, not yet attempted)
+## RCS: PARKED (2026-10-06) -- try GApps/Messages first, port LG's RCS only if that fails
 
-Flash A/B target voice VoLTE only. RCS (messaging, presence, enriched calling)
-is deferred but the surface is mapped so it is not rediscovered later.
+**Decision:** do not port LG's RCS unless Google Messages fails to provide it. Rationale below; the
+mapping notes that follow are kept only so a future attempt does not restart from zero.
+
+Google Messages does RCS over **Jibe Cloud** on plain data, not through the carrier IMS stack, and
+T-Mobile (so Mint) migrated to Jibe -- so on this SIM Chat features should work with GApps and the
+mobile data we already have, with no IMS involvement. The two ways an app *could* use a device IMS
+stack for RCS are both closed to us: UCE capability exchange needs an `RcsFeature` bridge that does
+not exist, and single registration needs `SipTransportImplBase` (Android 12), which a 2016 stack
+predates by six years. Test order: get SMS working (Jibe verifies the number by SMS), build
+`PRESET=full`, sign in, check Chat features. That experiment decides it.
+
+**Three corrections to the earlier plan, each verified 2026-10-06 -- the old plan was wrong:**
+- `ImsServiceControllerCompat.createRcsFeature()` returns `null` unconditionally ("Return non-null
+  if there is a custom RCS implementation that needs a compatability layer"). The compat path has an
+  RCS placeholder that upstream never implemented.
+- **There is no `RcsFeatureCompatAdapter` in AOSP.** MMTel, registration and config each have one;
+  RCS does not. The MMTel bridge worked because a finished adapter layer existed to plug into. For
+  RCS there is nothing to plug into, so the whole adapter would be ours.
+- **Ims4 does not implement AOSP's UCE API at all** -- zero references to `IUceService` or
+  `UceServiceBase`. The `com.android.ims.internal.uce.*` classes exist in LG's framework but Ims4
+  never touches them, so "un-stub UCE and wire config_ims_rcs_package" (the earlier plan) cannot
+  work. LG's RCS is ~500 classes behind proprietary interfaces: `IEABService`/`IEABServiceListener`,
+  `ICapability3`/`ICapabilityListener3`, `IContentShare`, `IImageSession`, `IVideoSession`,
+  `IEnrichedCallService`, `IInCallSession`/`IOutCallSession`.
+
+If it is ever attempted: skip the compat path and write a **modern** `RcsFeature` ImsService in a
+separate app (`config_ims_rcs_package` may differ from the mmtel package) -- we would be writing the
+adapter either way, so write it against the supported API. Then regenerate LG's RCS AIDL with
+gen-legacy-aidl.py (verify with aidl-tx-diff.py), un-stub the RCS parcelables via build-ims4.sh step
+3.5, and expect the same capability lie as voice (Ims4's UC flags are provisioning-gated and
+`setProvisionedValue` is refused, so derive capability from registration).
+
+**Stability constraint that makes this risky:** `com.lge.ims` is `persistent`, so an RCS crash takes
+VOICE down with it. Proven 2026-10-06: LG's EAB presence agent crashed the whole IMS process after
+every call (see the `duration_video` stub in `ims/smali-stubs.txt`), costing one working call per
+boot. Any RCS work belongs behind a build option, default off.
+
+Flash A/B target voice VoLTE only. The surface mapping below predates the corrections above -- read
+it with them in mind.
 
 What RCS adds on top of the voice stack:
 - **Ims4 already carries the RCS code** (no extra app): `com.lge.ims.rcs`,
