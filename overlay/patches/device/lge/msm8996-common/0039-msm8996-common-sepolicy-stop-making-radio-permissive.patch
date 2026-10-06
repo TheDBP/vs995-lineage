@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 08:13:55 -0400
+Subject: [PATCH] msm8996-common: sepolicy: stop making radio permissive
+
+Every rule here is an observed denial from a boot that registered and carried a
+call with two-way audio, so the set is complete for the paths VoLTE uses.
+
+- lgeims_mmpf and com.lge.ims.phone get their own service types and a
+  service_contexts, instead of landing on default_android_service. This is the
+  one that matters: lgeims_mmpf failing to publish costs VoLTE its audio,
+  because the modem's voice media session is created through it, and the add
+  only ever succeeded because radio was permissive.
+- The QMI socket to the modem is AF_MSM_IPC, which the policy has no class for,
+  so it lands on the generic socket class; ioctl 0xc304 is the IPC-router
+  bind/lookup. Self-scoped.
+- net.ims.* and persist.lg.ims.* get a system_internal_prop type: radio is a
+  coredomain and may only set a system_property_type, while those would
+  otherwise be system_prop and default_prop.
+
+The IPsec helpers already spelled out their radio-side rules, so only their
+stale 'radio is permissive' comment needed correcting.
+
+---
+ sepolicy/private/ims.te            | 28 +++++++++++++++++++++++-----
+ sepolicy/private/lge_ims_ipsec.te  |  4 ++--
+ sepolicy/private/lge_ims_prop.te   |  3 +++
+ sepolicy/private/property_contexts |  6 ++++++
+ sepolicy/private/service_contexts  |  6 ++++++
+ 5 files changed, 40 insertions(+), 7 deletions(-)
+ create mode 100644 sepolicy/private/lge_ims_prop.te
+ create mode 100644 sepolicy/private/service_contexts
+
+diff --git a/sepolicy/private/ims.te b/sepolicy/private/ims.te
+index 02455570..c5eb62e2 100644
+--- a/sepolicy/private/ims.te
++++ b/sepolicy/private/ims.te
+@@ -1,5 +1,23 @@
+-# LG IMS (VoLTE) bringup -- com.lge.ims runs in the radio domain (android.uid.phone). The 2016 stack
+-# sets net.ims.* properties, opens QMI sockets, reads config files. BRINGUP: make radio permissive to
+-# surface every denial in one pass (userdebug only); replace with the audit2allow'd rules + remove this
+-# before shipping. See IMS.md / rom-forge debugging-volte.md "Get the reworked OEM app to RUN".
+-permissive radio;
++# LG IMS (VoLTE): com.lge.ims runs in the radio domain (it shares android.uid.phone), as does the
++# ImsBridge that presents it to the framework. The 2016 stack publishes its own binder services,
++# talks to the modem over a QMI socket the policy has no class for, and sets a handful of net.ims.*
++# properties. Every rule below is an observed denial from a boot that registered and carried a call
++# with two-way audio -- see IMS.md. radio is NO LONGER permissive; add rules here instead of
++# restoring it, and re-audit with `logcat | grep "avc.*radio"` after any IMS change.
++
++type lgeims_mmpf_service, service_manager_type;
++type lge_ims_phone_service, service_manager_type;
++
++# The media service that creates the modem's voice session, and the stack's own phone service.
++allow radio lgeims_mmpf_service:service_manager { add find };
++allow radio lge_ims_phone_service:service_manager { add find };
++
++# The QMI socket to the modem (AF_MSM_IPC). The policy has no class for that family, so it lands on
++# the generic `socket` class; ioctl 0xc304 is the IPC-router bind/lookup. Self-scoped: these are the
++# stack's own sockets, not another domain's.
++allow radio self:socket { create read write ioctl };
++allowxperm radio self:socket ioctl { 0xc304 };
++
++# net.ims.* is the registration/operator state the stack publishes; persist.lg.ims.* is its own
++# saved state. Both are labelled in property_contexts next to this file.
++set_prop(radio, lge_ims_prop)
+diff --git a/sepolicy/private/lge_ims_ipsec.te b/sepolicy/private/lge_ims_ipsec.te
+index 209ef797..d7a918ea 100644
+--- a/sepolicy/private/lge_ims_ipsec.te
++++ b/sepolicy/private/lge_ims_ipsec.te
+@@ -1,8 +1,8 @@
+ # LG IMS IPsec helpers (ims/lge-ims-ipsec.rc): libims in com.lge.ims (radio) -> ipsecstarter (system)
+ # -> ctl.start ipsecclient (root, netlink xfrm). The three talk over ABSTRACT unix dgram sockets
+ # @/tmp/ims/socket/{ipsec_user,ipsec_controller,ipsec_proxy}: no file labels, only the peer domains'
+-# socket types are checked. radio is permissive for bringup (ims.te); its rules are still listed here
+-# so the set is complete when that is removed.
++# socket types are checked, which is why the radio side is spelled out below rather than relying on
++# file labels. radio is enforcing (ims.te).
+ type ipsecstarter, domain, coredomain;
+ type ipsecstarter_exec, exec_type, file_type, system_file_type;
+ init_daemon_domain(ipsecstarter)
+diff --git a/sepolicy/private/lge_ims_prop.te b/sepolicy/private/lge_ims_prop.te
+new file mode 100644
+index 00000000..bfb5ef0b
+--- /dev/null
++++ b/sepolicy/private/lge_ims_prop.te
+@@ -0,0 +1,3 @@
++# Properties the LG IMS stack sets from the radio domain (ims.te). system_internal_prop keeps them
++# a system_property_type, which a coredomain is allowed to set.
++system_internal_prop(lge_ims_prop)
+diff --git a/sepolicy/private/property_contexts b/sepolicy/private/property_contexts
+index 7215af0b..9a7dedc9 100644
+--- a/sepolicy/private/property_contexts
++++ b/sepolicy/private/property_contexts
+@@ -1,3 +1,9 @@
+ # ipsecstarter starts/stops ipsecclient (lge_ims_ipsec.te)
+ ctl.start$ipsecclient    u:object_r:ctl_ipsec_prop:s0
+ ctl.stop$ipsecclient     u:object_r:ctl_ipsec_prop:s0
++
++# LG IMS state. system_internal_prop because radio is a coredomain, which may only set a
++# system_property_type; net.ims.* would otherwise be system_prop and persist.lg.ims.* default_prop,
++# neither of which radio may set.
++net.ims.                 u:object_r:lge_ims_prop:s0 prefix
++persist.lg.ims.          u:object_r:lge_ims_prop:s0 prefix
+diff --git a/sepolicy/private/service_contexts b/sepolicy/private/service_contexts
+new file mode 100644
+index 00000000..644ed3fa
+--- /dev/null
++++ b/sepolicy/private/service_contexts
+@@ -0,0 +1,6 @@
++# Services com.lge.ims publishes and looks up. Without these they land on default_android_service,
++# which radio may not add to or find, so the `add` only succeeded while radio was permissive -- and
++# lgeims_mmpf failing to publish costs VoLTE its audio, since the modem media session is created
++# through it.
++lgeims_mmpf             u:object_r:lgeims_mmpf_service:s0
++com.lge.ims.phone       u:object_r:lge_ims_phone_service:s0

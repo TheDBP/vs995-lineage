@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 08:13:55 -0400
+Subject: [PATCH] msm8996-common: do not offer Wi-Fi calling or video calling
+
+Neither works on this device. VT needs the MMPF media path, and WFC needs an
+ePDG tunnel from LG's ipsecd, which is not ported -- the IMS stack's own
+capability reporting already says Voice only. The toggles still appeared
+because the CarrierConfig defaults claim the carrier supports both, so override
+them in the device's CarrierConfig RRO with no mcc/mnc filter: it is a device
+limitation, not a carrier one.
+
+Re-enable per feature if either is ever made to work; the bridge already maps
+IWLAN registration and the audio HAL already has a VOWLAN VSID, so WFC would
+be a matter of the tunnel and carrier entitlement rather than new plumbing.
+
+---
+ rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml b/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
+index d28cf9e1..5c9a7481 100644
+--- a/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
++++ b/rro_overlays/CarrierConfigOverlay/res/xml/vendor.xml
+@@ -27,6 +27,17 @@ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.-->
+ 
+ <carrier_config_list>
++    <!-- This device cannot do Wi-Fi calling or video calling over IMS, so do not offer either in
++         SIM settings. VoLTE works (see IMS.md); VT needs the MMPF media path, and WFC needs an ePDG
++         tunnel from LG's ipsecd, which is not ported. Both toggles otherwise appear because the
++         CarrierConfig defaults say the carrier supports them, while the device's own capability
++         reporting already says Voice only. No mcc/mnc filter: it is a device limit, not a carrier
++         one. Re-enable per feature if either is ever made to work. -->
++    <carrier_config>
++        <boolean name="carrier_wfc_ims_available_bool" value="false" />
++        <boolean name="carrier_vt_available_bool" value="false" />
++    </carrier_config>
++
+     <!-- Below are some sample filters for various scenarios.
+          You can have multiple carrier_config blocks.
+          blocks for various filters. For more info visit DefaultCarrierConfigService.java

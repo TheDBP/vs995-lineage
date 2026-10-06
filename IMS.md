@@ -872,6 +872,20 @@ Verified on the Flash B build plus the pushed bridge revisions:
   `mRingingCallState=8` -- Telecom then refuses to dial ("Cannot place a call as there is an
   unanswered incoming call"). Seen while MO calls were failing instantly; recheck now that they do
   not.
+- **SMS over IMS: AP side works, modem side does not** (tested 2026-10-06 without a build, by
+  pushing stock `imswmsproxy` + the 64-bit `libqmi_wms_client_helper.so` and running it by hand).
+  Ims4's SMS client reached `Update SoI Service Mode :: STATE_READY` for the first time -- it had
+  been failing `Initialize WMS client` since the port began -- and `@/tmp/ims/wms/wms_proxy` binds.
+  But `qmi_wms_transport_init()` returns `QMI_INTERNAL_ERR`, so `ImsSmsDispatcher` keeps
+  `cap=false` and SMS correctly falls back to CS (`GsmSMSDispatcher: sendSms: isIms()=false`).
+  SMS works for the user either way; this only matters if the carrier drops CS fallback.
+  Notes for whoever picks it up: it is NOT the sec_config class of bug (zero IPC-router denials,
+  and QMI service 5 already has a rule). Two things to eliminate first -- the test ran it as root
+  rather than stock's `user system, group radio system net_admin net_raw` (init cannot exec a plain
+  `vendor_file`, so a real domain + exec type is needed, shaped like `lge_ims_ipsec.te`), and the
+  AOSP/QTI RIL may already own the modem's WMS transport, which would refuse a second registration.
+  The binary must live in `/vendor/bin`, not `/system/bin` as on stock: it links vendor QMI libs and
+  a system-namespace binary cannot see `/vendor/lib64` (pre-Treble stock had no such split).
 - **Still open from before:** `service_contexts` for `lgeims_mmpf` and `com.lge.ims.phone` before
   `permissive radio` can go (the `add` succeeds only because radio is permissive, so media dies the
   moment it is enforcing); `setImsStatusToModem` dropped; SMS over IMS needs `imswmsproxy`.
