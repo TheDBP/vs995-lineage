@@ -17,7 +17,9 @@ claimed.
 
 - **VoLTE — outgoing and incoming calls with two-way audio.** Carrier networks have shut down the
   2G/3G circuit-switched voice this phone shipped with, so without this the device is not a phone.
-  See **[IMS.md](IMS.md)**.
+  It is LG's stock IMS app rebuilt for Android 17 plus a bridge into the modern telephony stack, so
+  **building it needs the stock firmware you supply** — see *Build it* below and
+  **[IMS.md](IMS.md)**.
 - **Mobile data on a DirtySanta-unlocked handset** — the engineering bootloader leaves a flag the
   modem reads as "factory cable attached" and refuses every data call, on any ROM including the
   official nightly. A kernel patch clears it.
@@ -38,13 +40,26 @@ claimed.
 
 ## Build it
 
+> **You must supply LG's stock firmware.** VoLTE here is LG's own 2016 IMS app reworked to run on
+> Android 17. It is proprietary, so this repo carries the recipe and none of the ingredients — you
+> provide a stock VS995 Nougat KDZ and a prepare step turns it into the artifacts the build needs.
+> Every preset includes IMS, so a tree without them **does not fall back to a ROM without VoLTE; it
+> fails to build.** Budget for the extraction before you start, not after it stops.
+>
+> Step by step: **[Building the IMS stack from stock
+> firmware](IMS.md#building-the-ims-stack-from-stock-firmware)**.
+
 ```sh
 git clone https://github.com/TheDBP/vs995-lineage.git
 cd vs995-lineage
+
+# one-time: stage the IMS artifacts out of your stock KDZ (see the link above),
+# then the ordinary build:
 PRESET=clean ./forge/bootstrap.sh
 ```
 
-Needs Docker and enough free disk for a full AOSP checkout plus build output.
+Needs Docker and enough free disk for a full AOSP checkout plus build output. The stock KDZ and
+everything derived from it stay out of this repo; nothing proprietary is committed or released.
 
 **Output:** `build_output/src/out/target/product/vs995/lineage-24.0-*.zip`
 

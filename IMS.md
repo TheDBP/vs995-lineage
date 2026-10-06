@@ -5,6 +5,95 @@ Nougat firmware (VS99519A/VS9951CA, 7.0 NRD90M) actually does so the work
 need not be redone. Method per item in brackets; nothing here is inferred
 from documentation.
 
+## Building the IMS stack from stock firmware
+
+*If you are building this ROM, start here.*
+
+**VoLTE on this device is LG's own 2016 IMS app, reworked to run on Android 17. It is proprietary,
+so this repo carries the recipe and none of the ingredients.** You supply the stock firmware; the
+build turns it into the shipped artifacts. Nothing derived from it is ever committed here.
+
+`ims/ims.mk` is included unconditionally, so a tree without these artifacts does not quietly produce
+a ROM lacking VoLTE -- it fails to build. Three files must exist before you start:
+
+| staged file | produced by |
+|---|---|
+| `device/lge/msm8996-common/ims/Ims4-reworked.apk` | `ims/build-ims4.sh` |
+| `device/lge/msm8996-common/ims/ipsecstarter` | `ims/build-ims4.sh` step 7 (copied from stock) |
+| `device/lge/msm8996-common/ims/ipsecclient` | likewise |
+
+### 1. Get the stock firmware
+
+A VS995 KDZ, Nougat 7.0 (`VS99519A` or `VS9951CA`) -- the same images this document was reverse
+engineered from. LG does not publish these; the usual community mirrors carry them. Verify you have
+the **Verizon vs995** variant: `h918`/`us996` ship a different IMS build and the smali offsets this
+port patches will not match.
+
+Extract it to a raw `system.image` with [kdztools](https://github.com/ehem/kdztools) (`unkdz` then
+`undz`). That is third-party tooling and not vendored here. You want the partition named `system`.
+
+### 2. Pull what the rework needs out of it
+
+Everything comes from that one image; nothing comes off a running phone. `debugfs` reads an ext4
+image without mounting it, so no root and no loop device:
+
+```sh
+I=<path>/system.image
+O=<staging-dir>; mkdir -p $O/lib $O/bin
+
+debugfs -R 'dump /priv-app/Ims4/Ims4.apk        '$O'/Ims4.apk'           $I
+debugfs -R 'dump /framework/arm64/boot-ims-common.oat '$O'/boot-ims-common.oat' $I
+debugfs -R 'dump /framework/arm64/boot-framework.oat  '$O'/boot-framework.oat'  $I
+debugfs -R 'dump /bin/ipsecstarter '$O'/bin/ipsecstarter' $I
+debugfs -R 'dump /bin/ipsecclient  '$O'/bin/ipsecclient'  $I
+
+# The 32-bit LG SIP + QMI libs. The authoritative list is LG_LIBS at the top of
+# ims/build-ims4.sh -- read it from there rather than copying it, so the two cannot drift.
+for l in $(sed -n 's/^LG_LIBS="\(.*\)"/\1/p' device/lge/msm8996-common/ims/build-ims4.sh); do
+  debugfs -R "dump /lib/$l.so $O/lib/$l.so" $I
+done
+```
+
+`/lib` is the 32-bit tree: these libs must be the 32-bit ones. The stock image ships both ABIs and
+the 64-bit namesakes in `/lib64` will link-fail later, in a way that does not obviously point back
+here.
+
+### 3. Deodex the framework, then build the app
+
+The rework needs a **clean** framework deodex -- it copies the real `com.android.ims` parcelables
+out of it, and quickened smali will not reassemble:
+
+```sh
+./forge/tools/deodex-jar.sh $O/boot-framework.oat $I $O/framework-smali
+```
+
+Then the app itself. Six positional arguments, in this order:
+
+```sh
+cd build_output/src/device/lge/msm8996-common
+FORGE=<repo>/forge ./ims/build-ims4.sh \
+    $O/Ims4.apk $O/boot-ims-common.oat $I $O/framework-smali $O/lib \
+    ims/Ims4-reworked.apk $O/bin
+```
+
+It writes `ims/Ims4-reworked.apk` and copies `ipsecstarter`/`ipsecclient` beside it. The output is
+deliberately **unsigned** -- `ims/Android.bp` imports it with `certificate: "platform"`, because
+`Ims4` is `sharedUserId android.uid.phone` and must carry the platform key. Do not sign it yourself.
+
+### 4. Build normally
+
+```sh
+PRESET=clean ./forge/bootstrap.sh
+```
+
+The staged files sit in the synced tree, which `repo sync --force-sync` prunes, so after a sync that
+resets `device/lge/msm8996-common` you repeat step 3 (not steps 1-2 -- keep the staging dir).
+
+**Known gap:** unlike the Robin, where `device.mk` stages the IMS blobs itself on first build from a
+stock zip dropped in the repo root, this is a hand-run step with no guard. A fresh clone fails at
+Soong with a missing-file error that does not say "you need the stock firmware". Adopting the
+Robin's pattern here is the obvious fix and is not done yet.
+
 ## Architecture: AP-side IMS
 
 The modem does not run an IMS stack. The SIP/IMS stack is a Qualcomm
