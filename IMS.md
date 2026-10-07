@@ -996,7 +996,7 @@ Verified on the Flash B build plus the pushed bridge revisions:
 
   The line that used to read `onCallStartFailed reasonCode=510` now reads `onCallTerminated`, and
   `mCalls` is empty afterwards with no CallAnomalyWatchdog zombie report.
-- **SMS over IMS: BLOCKED on a transport mismatch, not a permission or ordering problem**
+- **SMS over IMS: ROOT CAUSE FOUND AND FIXED at the QMI layer** (2026-10-06). The blocker was a
   (tested on hardware 2026-10-06, both earlier leads disproven). Staging the stock `imswmsproxy` +
   the 64-bit `libqmi_wms_client_helper.so` and running it gets further than before: the proxy binds
   `@/tmp/ims/wms/wms_proxy`, Ims4's SMS client reaches `Update SoI Service Mode :: STATE_READY`, and
@@ -1051,6 +1051,45 @@ Verified on the Flash B build plus the pushed bridge revisions:
 
   Until then SMS stays on the circuit-switched path, which works and which the user has verified
   both ways.
+
+  **It is a QMI IDL VERSION GATE, and the fix is one stock blob.** `wms_get_service_object_internal_v01`
+  is a generated getter that returns NULL unless the caller's (major, minor, tool) matches the
+  library exactly. LG's 2016 helper asks for **(1, 24, 6)**; this ROM's `libqmiservices.so` accepts
+  only **(1, 35, 6)** -- eleven minor revisions newer. NULL object means no QMI transaction ever
+  happens, which is precisely why every symptom pointed nowhere: `qmi_err_code=0`, no IPC-router
+  denial, no SELinux denial, no QMI library output at all.
+
+  Verified by a standalone QCCI probe (no LG daemon involved) that dlopens the device's own libs and
+  calls the getter, then `qmi_client_init_instance`:
+
+  ```
+  ROM libqmiservices:    (1,24,6) -> NULL          -> FAIL
+  scan:                  (1,35,6) -> 0x70229eac30  (the only version accepted)
+  STOCK libqmiservices:  (1,24,6) -> 0x751782fb68  -> qmi_client_init_instance rc=0 client=0x1  PASS
+  ```
+
+  Put the stock 64-bit `/vendor/lib64/libqmiservices.so` (127968 bytes, from the KDZ) ahead of the
+  ROM's on `imswmsproxy`'s library path and the whole chain comes up:
+
+  ```
+  InitWmsService - client=1, qmi_err_code=0              (was client=-1)
+  UpdateServiceStatus - status=READY, tid=0              (was tid=-1 + "WMS service is not connected")
+  SoIClient.cpp:416 Update SoI Service Mode :: STATE_READY
+  ```
+
+  This is not a hack: the modem is stock 2016 firmware, so the stock IDL is the *correct* encoder
+  for it. The newer IDL came in with the newer userspace.
+
+  **What is still missing is ours, not LG's.** With the transport up, the framework still reports
+  `MmTel ... SMS: false` and `ImsSmsDispatcher: cap=false`. The bridge probes the OEM capability
+  bitmap when registration connects, and the SoI service only reaches STATE_READY afterwards, so
+  nothing re-probes. That is `LegacyMMTelFeature` in our own tree -- re-probe on SoI readiness and
+  surface `CAPABILITY_TYPE_SMS` -- and it is the last step.
+
+  To ship it: `imswmsproxy` as a `cc_prebuilt_binary` with an rc (`class main, user system, group
+  radio system net_admin net_raw`), the 64-bit helper and the **stock** `libqmiservices.so` as vendor
+  prebuilts placed so only this daemon sees them, and a sepolicy domain shaped like
+  `lge_ims_ipsec.te`.
 
   **The GID theory is refuted, conclusively** (2026-10-06). `sec_config` grants WMS (service 5) to
   GID 1001 only, and the daemon had only ever been tested as root -- an obvious suspect. It is not
