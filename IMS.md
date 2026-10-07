@@ -1101,6 +1101,14 @@ Verified on the Flash B build plus the pushed bridge revisions:
   is LG framework code we do not have. That is a different project from this bridge, not a last
   step, and it is why SMS is parked rather than nearly done.
 
+  The reusable half of this is in the forge, so the next device does not repeat it:
+  `tools/android-cc.sh` (build a one-file C probe against the tree and push it),
+  `tools/native-probes/qmi-idl-probe.c` (which IDL version the ROM accepts, and whether a client
+  then initialises), `tools/native-probes/unix-dgram-poke.c` (drive an OEM daemon's message
+  dispatcher without its app), `tools/native-probes/run-as-gid.c` (test a GID gate without an
+  init.rc), GOTCHAS 40 for the version gate itself, and the "SMS over IMS" section of
+  `docs/debugging-volte.md` for the method and the compat-path dead end.
+
   To ship it: `imswmsproxy` as a `cc_prebuilt_binary` with an rc (`class main, user system, group
   radio system net_admin net_raw`), the 64-bit helper and the **stock** `libqmiservices.so` as vendor
   prebuilts placed so only this daemon sees them, and a sepolicy domain shaped like
