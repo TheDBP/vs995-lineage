@@ -32,6 +32,16 @@ them and REGISTER worked while a call would have arrived with no number.
 Wiring: ImsBridge and the telephony.ims feature xml (without it PhoneGlobals
 never constructs an ImsResolver), config_ims_mmtel_package, and
 ro.telephony.block_binder_thread_on_incoming_calls=false.
+
+That property is also where vendor_prop.mk has been assigning to
+PRODUCT_PRODUCT_OVERRIDES since 2022. There is no such build variable --
+the real ones are PRODUCT_PROPERTY_OVERRIDES and PRODUCT_PRODUCT_PROPERTIES,
+both used elsewhere in the same file -- so make collects the assignment and
+nothing ever reads it. Drop the dead block instead of correcting the name:
+ImsPhoneCallTracker.onIncomingCall is the property's only consumer and it
+cannot run without an ImsService, so it belongs with the IMS stack in
+ims.mk rather than in the unconditional vendor props, and one property
+assigned in two files is a worse trap than a line that does nothing.
 ---
  ims/bridge/Android.bp                         |  38 ++
  ims/bridge/AndroidManifest.xml                |  43 +++
@@ -78,7 +88,8 @@ ro.telephony.block_binder_thread_on_incoming_calls=false.
  ims/build-ims4.sh                             |  39 +-
  ims/ims.mk                                    |  13 +
  .../services/Telephony/res/values/config.xml  |   2 +-
- 45 files changed, 2456 insertions(+), 5 deletions(-)
+ vendor_prop.mk                                |   4 -
+ 46 files changed, 2456 insertions(+), 9 deletions(-)
  create mode 100644 ims/bridge/Android.bp
  create mode 100644 ims/bridge/AndroidManifest.xml
  create mode 100644 ims/bridge/aidl/android/view/Surface.aidl
@@ -2881,3 +2892,18 @@ index 1b181388..bfb69460 100644
  
      <!-- String indicating the package name of the device ImsService implementation for RCS. -->
      <string name="config_ims_rcs_package" translatable="false">com.android.service.ims</string>
+diff --git a/vendor_prop.mk b/vendor_prop.mk
+index ab53f320..d5241d13 100644
+--- a/vendor_prop.mk
++++ b/vendor_prop.mk
+@@ -148,10 +148,6 @@ PRODUCT_PROPERTY_OVERRIDES += \
+     ro.hwui.text_large_cache_width=3072 \
+     ro.hwui.text_large_cache_height=2048
+ 
+-# IMS
+-PRODUCT_PRODUCT_OVERRIDES += \
+-    ro.telephony.block_binder_thread_on_incoming_calls=false
+-
+ # LMKD
+ PRODUCT_PROPERTY_OVERRIDES += \
+     ro.lmk.low=1001 \

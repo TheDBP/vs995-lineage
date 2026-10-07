@@ -61,12 +61,12 @@ index d28cf9e1..2963f670 100644
           You can have multiple carrier_config blocks.
           blocks for various filters. For more info visit DefaultCarrierConfigService.java
 diff --git a/vendor_prop.mk b/vendor_prop.mk
-index ab53f320..402dbc24 100644
+index d5241d13..db4d0423 100644
 --- a/vendor_prop.mk
 +++ b/vendor_prop.mk
-@@ -152,6 +152,16 @@ PRODUCT_PROPERTY_OVERRIDES += \
- PRODUCT_PRODUCT_OVERRIDES += \
-     ro.telephony.block_binder_thread_on_incoming_calls=false
+@@ -148,6 +148,16 @@ PRODUCT_PROPERTY_OVERRIDES += \
+     ro.hwui.text_large_cache_width=3072 \
+     ro.hwui.text_large_cache_height=2048
  
 +# ImsManager.is{Volte,Vt,Wfc}EnabledByPlatform() return true outright when their override property
 +# is 1, before reading config_device_*_available or the CarrierConfig key. Left unset, these are
