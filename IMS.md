@@ -1080,11 +1080,26 @@ Verified on the Flash B build plus the pushed bridge revisions:
   This is not a hack: the modem is stock 2016 firmware, so the stock IDL is the *correct* encoder
   for it. The newer IDL came in with the newer userspace.
 
-  **What is still missing is ours, not LG's.** With the transport up, the framework still reports
-  `MmTel ... SMS: false` and `ImsSmsDispatcher: cap=false`. The bridge probes the OEM capability
-  bitmap when registration connects, and the SoI service only reaches STATE_READY afterwards, so
-  nothing re-probes. That is `LegacyMMTelFeature` in our own tree -- re-probe on SoI readiness and
-  surface `CAPABILITY_TYPE_SMS` -- and it is the last step.
+  **But the framework still cannot use it, and the bridge cannot be made to help.** With the
+  transport up, `MmTel ... SMS: false` and `ImsSmsDispatcher: cap=false` remain, and that is
+  structural rather than a missing probe:
+
+  - The legacy 6-slot feature bitmap has no SMS slot (0-5 are voice/video/UT over LTE/WiFi), and
+    AOSP's `MmTelFeatureCompatAdapter.convertCapabilities()` sets only VOICE, VIDEO and UT.
+    `CAPABILITY_TYPE_SMS` appears **nowhere** in that adapter. No re-probe can surface it.
+  - The adapter implements **none** of the SMS surface -- no `sendSms`, `acknowledgeSms`,
+    `onSmsReady`, `setSmsListener`, `getSmsFormat`. The modern `MmTelFeature` has 13 references to
+    `ImsSmsImplBase`; the compat path has zero. So `ImsSmsDispatcher` has nothing to send to.
+  - The 7.0 `IImsService` LG exposes has no SMS method either (0 matches in `iface-list.txt`).
+    LG's SMS over IMS lives entirely inside Ims4: SoI client -> libimswms -> wms_proxy -> QMI WMS.
+    It never crosses the IMS binder, so there is nothing for an adapter to call even if one existed.
+
+  So the QMI fix makes LG's own SMS path healthy, and the AOSP framework still has no route to it.
+  Closing that needs a **modern** (non-compat) ImsService: implement `MmTelFeature` directly with
+  `getSmsImplementation()`, reimplementing what `MmTelFeatureCompatAdapter` does for calls (which is
+  readable, ~500 lines) plus the SMS surface, and a way for Ims4 to hand MT SMS up -- which on stock
+  is LG framework code we do not have. That is a different project from this bridge, not a last
+  step, and it is why SMS is parked rather than nearly done.
 
   To ship it: `imswmsproxy` as a `cc_prebuilt_binary` with an rc (`class main, user system, group
   radio system net_admin net_raw`), the 64-bit helper and the **stock** `libqmiservices.so` as vendor
