@@ -22,10 +22,6 @@ Android 16+ was supposed to be out of reach on a 4.4 kernel, for want of eBPF fe
 have. It is reachable, with the bpf loaders patched to carry on with what the kernel can give them
 instead of hanging.
 
-`lineage-22.2` has been retired. It carried no IMS work and no kernel patches, so on a modern
-network it can neither place a call nor — on a bootloader-unlocked handset — get mobile data. Its
-history is preserved as the tag `archive/lineage-22.2`.
-
 Installing, building, what is changed and what is not: the README on the branch.
 
 ## License
