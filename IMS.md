@@ -29,8 +29,20 @@ engineered from. LG does not publish these; the usual community mirrors carry th
 the **Verizon vs995** variant: `h918`/`us996` ship a different IMS build and the smali offsets this
 port patches will not match.
 
-Extract it to a raw `system.image` with [kdztools](https://github.com/ehem/kdztools) (`unkdz` then
-`undz`). That is third-party tooling and not vendored here. You want the partition named `system`.
+Two steps with [kdztools](https://github.com/ehem/kdztools), which is third-party and not vendored
+here: `unkdz` turns the `.kdz` into a `.dz` (e.g. `VS9951CA_01.dz`), and `undz` unpacks that into a
+`parts/` directory of raw partition images. You want `parts/system.image` -- ignore the `.params`
+file beside it, and ignore `modem.image` unless you are doing modem work.
+
+**Then rename it.** `undz` calls it `system.image`; the build looks for `VS995_Stock_ROM_*.image`
+(the `VOLTE_STOCK_GLOB` in `device.conf`), so a file still called `system.image` is simply not
+found. Something like:
+
+```sh
+cp <kdz-extract>/parts/system.image  VS995_Stock_ROM_VS9951CA.image
+```
+
+The name after the prefix is yours; put the firmware version in it so a stale image is obvious.
 
 ### 2. Pull what the rework needs out of it
 

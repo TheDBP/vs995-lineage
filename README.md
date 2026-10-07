@@ -50,15 +50,17 @@ claimed.
 > and names the image `-novolte`. Asking for `volte` explicitly without the firmware stops the
 > build rather than handing you an image that cannot place a call.
 >
-> An image rather than the KDZ: nothing here reads LG's container format, so extract it once with
-> [kdztools](https://github.com/ehem/kdztools) first. Step by step, including what a build without
-> VoLTE actually costs you: **[Building the IMS stack from stock
+> An image rather than the KDZ: nothing here reads LG's container format. Extract it once with
+> [kdztools](https://github.com/ehem/kdztools) — `unkdz` gives you a `.dz`, `undz` gives you
+> `parts/system.image` — and **rename that to `VS995_Stock_ROM_*.image`**, because the build matches
+> on the name and will not find a file still called `system.image`. Step by step, including what a
+> build without VoLTE actually costs you: **[Building the IMS stack from stock
 > firmware](IMS.md#building-the-ims-stack-from-stock-firmware)**.
 
 ```sh
 git clone https://github.com/TheDBP/vs995-lineage.git
 cd vs995-lineage
-cp ~/VS995_Stock_ROM_VS9951CA.image .     # optional; without it you get a -novolte image
+cp <kdz-extract>/parts/system.image VS995_Stock_ROM_VS9951CA.image   # optional; without it, -novolte
 PRESET=clean ./forge/bootstrap.sh
 ```
 
