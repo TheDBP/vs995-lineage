@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 10:10:27 -0400
+Subject: [PATCH] msm8996-common: sepolicy: let timekeep reach the app services
+ it uses
+
+Putting com.sony.timekeep in vendor_timekeep_app (its seapp_contexts
+rule wanted user=system, which never matched, so it had been landing in
+platform_app) fixed the property it could not set, and cost it the
+ordinary app service lookups platform_app came with:
+
+  denied { find } scontext=u:r:vendor_timekeep_app:s0
+    tcontext=u:object_r:{content_capture,gpu,netstats}_service:s0
+
+None is fatal -- the receiver runs and the property is set -- but each
+is a denial on every boot, and they are a consequence of that change
+rather than anything upstream got wrong.
+---
+ sepolicy/vendor/vendor_timekeep_app.te | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/sepolicy/vendor/vendor_timekeep_app.te b/sepolicy/vendor/vendor_timekeep_app.te
+index 5c96712b..f6212a32 100644
+--- a/sepolicy/vendor/vendor_timekeep_app.te
++++ b/sepolicy/vendor/vendor_timekeep_app.te
+@@ -1 +1,9 @@
+ allow vendor_timekeep_app system_data_file:dir r_dir_perms;
++
++# Moving the app into this domain (hardware/sony/timekeep seapp_contexts: it was falling through to
++# platform_app and could not set its own property) left it without the ordinary app service lookups
++# that platform_app had. None is fatal -- the receiver runs and sets persist.vendor.timeadjust
++# regardless -- but each is a denial on every boot.
++allow vendor_timekeep_app content_capture_service:service_manager find;
++allow vendor_timekeep_app gpu_service:service_manager find;
++allow vendor_timekeep_app netstats_service:service_manager find;
