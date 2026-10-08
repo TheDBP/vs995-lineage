@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 19:58:04 -0400
+Subject: [PATCH] msm8996-common: stop extracting UnifiedSettingsApp
+
+The Verizon unified settings app cannot start on this branch. It
+registers a receiver without saying whether it is exported, which
+Android 14 made mandatory, and the resulting SecurityException comes out
+of Application.onCreate:
+
+  Unable to create application com.lge.verizonsettings.UnifiedSettingsApplication
+  Caused by: java.lang.SecurityException: One of RECEIVER_EXPORTED or
+             RECEIVER_NOT_EXPORTED should be specified when a receiver is registered
+
+It is restarted on a timer, so this is not one crash but a stream of
+them -- 27 in a single captured log buffer, each with its own "keeps
+stopping" notification. Nothing depends on the app; it is a Nougat-era
+carrier settings panel for a carrier branch of a phone that is nine
+years old.
+---
+ proprietary-files.txt | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/proprietary-files.txt b/proprietary-files.txt
+index 0388cf31..0c67282e 100644
+--- a/proprietary-files.txt
++++ b/proprietary-files.txt
+@@ -585,7 +585,6 @@ system/etc/permissions/com.vzw.android.xml|19867261b1ac17dc7beea3514f86529a2ac5a
+ system/etc/permissions/com.vzw.avs.xml|01e01429f9fab8de9b12eb941a17b8ad6b5b519e
+ system/etc/permissions/com.vzw.vzwapnlib.xml|a9c540b9badabcd365759cb3052bb700b035638c
+ system/framework/VZWAVSLibrary.jar|7533f87a5d1406cda2a3981181a18e11f01c51b2
+-system/priv-app/UnifiedSettingsApp/UnifiedSettingsApp.apk|74a62f02f665b4a0b20103e6ceee09363e20fdff
+ 
+ # Widevine - from daisy - QKQ1.191002.002
+ vendor/bin/hw/android.hardware.drm@1.2-service.widevine|e130b8f1c8d46d8a185b00cba5ff8a2a871ee94c

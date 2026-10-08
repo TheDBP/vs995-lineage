@@ -42,9 +42,43 @@ ImsPhoneCallTracker.onIncomingCall is the property's only consumer and it
 cannot run without an ImsService, so it belongs with the IMS stack in
 ims.mk rather than in the unconditional vendor props, and one property
 assigned in two files is a worse trap than a line that does nothing.
+
+Nothing in the feature may throw. These methods run on a binder thread
+serving com.android.phone, and binder marshals IllegalStateException and
+the other builtin unchecked exceptions straight through to the caller.
+ImsServiceControllerCompat does not catch RuntimeException, so an
+exception out of here is a fatal crash in the framework's phone process:
+
+  ImsBridge: slot 0: ims service not registered
+  java.lang.IllegalStateException: legacy ims service unavailable
+    at MmTelFeatureCompatAdapter.getOldConfigInterface
+    at ImsServiceControllerCompat.createMMTelCompat
+  am_crash: com.android.phone
+
+The phone process restarts, ImsResolver rebinds this service, the same
+call throws again. Observed at one crash every ten seconds with Ims4
+dead, which makes the handset unusable -- SIM settings cannot be opened
+and the "keeps stopping" dialog never stops.
+
+So report it where the API expects it instead. Every entry point takes
+the service through legacyOrDown(), which returns null rather than
+throwing and puts the feature into STATE_NOT_AVAILABLE, and each caller
+returns something benign; the framework already handles that, as
+getOldConfigInterface's own catch returning null shows. Only from READY:
+before that the constructor's waiter is still running and a missing
+service is just the startup race.
+
+linkToDeath covers the rest. Ims4 is a separate process that can die on
+its own, and without it the feature stays READY over a service that is
+gone, leaving every call to discover that the hard way.
+
+CallSessionWrapper absorbs the same way, at all 27 of its call sites. A
+RemoteException there means Ims4 went away mid-call and the session is
+over regardless; taking the phone process down on top of that turns a
+dropped call into an unusable handset.
 ---
  ims/bridge/Android.bp                         |  38 ++
- ims/bridge/AndroidManifest.xml                |  43 +++
+ ims/bridge/AndroidManifest.xml                |  43 ++
  ims/bridge/aidl/android/view/Surface.aidl     |   9 +
  .../com/lge/imslegacy/ImsCallForwardInfo.aidl |   2 +
  .../com/lge/imslegacy/ImsCallProfile.aidl     |   2 +
@@ -54,42 +88,42 @@ assigned in two files is a worse trap than a line that does nothing.
  .../aidl/com/lge/imslegacy/ImsSsInfo.aidl     |   2 +
  .../lge/imslegacy/ImsStreamMediaProfile.aidl  |   2 +
  .../imslegacy/ImsSuppServiceNotification.aidl |   2 +
- .../imslegacy/internal/IImsCallSession.aidl   |  45 +++
- .../internal/IImsCallSessionListener.aidl     |  48 +++
- .../lge/imslegacy/internal/IImsConfig.aidl    |  22 ++
+ .../imslegacy/internal/IImsCallSession.aidl   |  45 ++
+ .../internal/IImsCallSessionListener.aidl     |  48 ++
+ .../lge/imslegacy/internal/IImsConfig.aidl    |  22 +
  .../com/lge/imslegacy/internal/IImsEcbm.aidl  |  15 +
  .../imslegacy/internal/IImsEcbmListener.aidl  |  14 +
  .../IImsExternalCallStateListener.aidl        |  14 +
  .../imslegacy/internal/IImsMultiEndpoint.aidl |  15 +
- .../internal/IImsRegistrationListener.aidl    |  25 ++
+ .../internal/IImsRegistrationListener.aidl    |  25 +
  .../lge/imslegacy/internal/IImsService.aidl   |  37 ++
  .../com/lge/imslegacy/internal/IImsUt.aidl    |  32 ++
- .../imslegacy/internal/IImsUtListener.aidl    |  24 ++
+ .../imslegacy/internal/IImsUtListener.aidl    |  24 +
  .../internal/IImsVideoCallCallback.aidl       |  20 +
- .../internal/IImsVideoCallProvider.aidl       |  27 ++
- .../com/lge/imslegacy/ImsCallForwardInfo.java |  49 +++
- .../src/com/lge/imslegacy/ImsCallProfile.java |  64 ++++
- .../com/lge/imslegacy/ImsConferenceState.java |  49 +++
- .../src/com/lge/imslegacy/ImsReasonInfo.java  |  49 +++
+ .../internal/IImsVideoCallProvider.aidl       |  27 +
+ .../com/lge/imslegacy/ImsCallForwardInfo.java |  49 ++
+ .../src/com/lge/imslegacy/ImsCallProfile.java |  64 +++
+ .../com/lge/imslegacy/ImsConferenceState.java |  49 ++
+ .../src/com/lge/imslegacy/ImsReasonInfo.java  |  49 ++
  .../src/com/lge/imslegacy/ImsSsInfo.java      |  33 ++
- .../lge/imslegacy/ImsStreamMediaProfile.java  |  41 +++
- .../imslegacy/ImsSuppServiceNotification.java |  54 +++
- .../bridge/CallSessionListenerAdapter.java    | 235 ++++++++++++
- .../ims/bridge/CallSessionWrapper.java        | 214 +++++++++++
- .../lineageos/ims/bridge/ConfigWrapper.java   | 185 ++++++++++
- .../src/org/lineageos/ims/bridge/Convert.java |  95 +++++
- .../org/lineageos/ims/bridge/EcbmWrapper.java |  51 +++
+ .../lge/imslegacy/ImsStreamMediaProfile.java  |  41 ++
+ .../imslegacy/ImsSuppServiceNotification.java |  54 ++
+ .../bridge/CallSessionListenerAdapter.java    | 235 +++++++++
+ .../ims/bridge/CallSessionWrapper.java        | 220 ++++++++
+ .../lineageos/ims/bridge/ConfigWrapper.java   | 185 +++++++
+ .../src/org/lineageos/ims/bridge/Convert.java |  95 ++++
+ .../org/lineageos/ims/bridge/EcbmWrapper.java |  51 ++
  .../ims/bridge/ImsBridgeService.java          |  37 ++
- .../ims/bridge/LegacyMMTelFeature.java        | 344 ++++++++++++++++++
- .../ims/bridge/ModemVoiceSession.java         |  68 ++++
- .../ims/bridge/MultiEndpointWrapper.java      |  61 ++++
- .../bridge/RegistrationListenerAdapter.java   | 199 ++++++++++
- .../org/lineageos/ims/bridge/UtWrapper.java   | 121 ++++++
+ .../ims/bridge/LegacyMMTelFeature.java        | 469 ++++++++++++++++++
+ .../ims/bridge/ModemVoiceSession.java         |  68 +++
+ .../ims/bridge/MultiEndpointWrapper.java      |  61 +++
+ .../bridge/RegistrationListenerAdapter.java   | 199 ++++++++
+ .../org/lineageos/ims/bridge/UtWrapper.java   | 121 +++++
  ims/build-ims4.sh                             |  39 +-
  ims/ims.mk                                    |  13 +
  .../services/Telephony/res/values/config.xml  |   2 +-
  vendor_prop.mk                                |   4 -
- 46 files changed, 2456 insertions(+), 9 deletions(-)
+ 46 files changed, 2587 insertions(+), 9 deletions(-)
  create mode 100644 ims/bridge/Android.bp
  create mode 100644 ims/bridge/AndroidManifest.xml
  create mode 100644 ims/bridge/aidl/android/view/Surface.aidl
@@ -1359,10 +1393,10 @@ index 00000000..08ec50f3
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java
 new file mode 100644
-index 00000000..9a3d1a17
+index 00000000..08177b9e
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,220 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.os.Message;
@@ -1409,9 +1443,15 @@ index 00000000..9a3d1a17
 +        return mIncoming;
 +    }
 +
-+    private static RuntimeException rethrow(String what, RemoteException e) {
++    /**
++     * A failed call on the legacy session. Logged and absorbed, never rethrown: these run on a
++     * binder thread serving com.android.phone, which does not catch RuntimeException from an
++     * ImsService -- see the note on LegacyMMTelFeature. A RemoteException here means the OEM stack
++     * went away mid-call, and the session is over either way; killing the phone process on top of
++     * that turns a dropped call into an unusable handset.
++     */
++    private static void failed(String what, RemoteException e) {
 +        Log.e(TAG, "call session: " + what + " failed", e);
-+        return new RuntimeException(what, e);
 +    }
 +
 +    @Override
@@ -1420,146 +1460,146 @@ index 00000000..9a3d1a17
 +            mLegacy.setListener(
 +                    listener == null ? null : new CallSessionListenerAdapter(listener, this));
 +        } catch (RemoteException e) {
-+            throw rethrow("setListener", e);
++            failed("setListener", e);
 +        }
 +    }
 +
 +    @Override
 +    public void close() {
-+        try { mLegacy.close(); } catch (RemoteException e) { throw rethrow("close", e); }
++        try { mLegacy.close(); } catch (RemoteException e) { failed("close", e); }
 +    }
 +
 +    @Override
 +    public String getCallId() {
-+        try { return mLegacy.getCallId(); } catch (RemoteException e) { throw rethrow("getCallId", e); }
++        try { return mLegacy.getCallId(); } catch (RemoteException e) { failed("getCallId", e); return null; }
 +    }
 +
 +    @Override
 +    public ImsCallProfile getCallProfile() {
 +        try { return Convert.toModern(mLegacy.getCallProfile()); }
-+        catch (RemoteException e) { throw rethrow("getCallProfile", e); }
++        catch (RemoteException e) { failed("getCallProfile", e); return null; }
 +    }
 +
 +    @Override
 +    public ImsCallProfile getLocalCallProfile() {
 +        try { return Convert.toModern(mLegacy.getLocalCallProfile()); }
-+        catch (RemoteException e) { throw rethrow("getLocalCallProfile", e); }
++        catch (RemoteException e) { failed("getLocalCallProfile", e); return null; }
 +    }
 +
 +    @Override
 +    public ImsCallProfile getRemoteCallProfile() {
 +        try { return Convert.toModern(mLegacy.getRemoteCallProfile()); }
-+        catch (RemoteException e) { throw rethrow("getRemoteCallProfile", e); }
++        catch (RemoteException e) { failed("getRemoteCallProfile", e); return null; }
 +    }
 +
 +    @Override
 +    public String getProperty(String name) {
 +        try { return mLegacy.getProperty(name); }
-+        catch (RemoteException e) { throw rethrow("getProperty", e); }
++        catch (RemoteException e) { failed("getProperty", e); return null; }
 +    }
 +
 +    @Override
 +    public int getState() {
-+        try { return mLegacy.getState(); } catch (RemoteException e) { throw rethrow("getState", e); }
++        try { return mLegacy.getState(); } catch (RemoteException e) { failed("getState", e); return State.INVALID; }
 +    }
 +
 +    @Override
 +    public boolean isInCall() {
-+        try { return mLegacy.isInCall(); } catch (RemoteException e) { throw rethrow("isInCall", e); }
++        try { return mLegacy.isInCall(); } catch (RemoteException e) { failed("isInCall", e); return false; }
 +    }
 +
 +    @Override
 +    public void setMute(boolean muted) {
-+        try { mLegacy.setMute(muted); } catch (RemoteException e) { throw rethrow("setMute", e); }
++        try { mLegacy.setMute(muted); } catch (RemoteException e) { failed("setMute", e); }
 +    }
 +
 +    @Override
 +    public void start(String callee, ImsCallProfile profile) {
 +        try { mLegacy.start(callee, Convert.toLegacy(profile)); }
-+        catch (RemoteException e) { throw rethrow("start", e); }
++        catch (RemoteException e) { failed("start", e); }
 +    }
 +
 +    @Override
 +    public void startConference(String[] participants, ImsCallProfile profile) {
 +        try { mLegacy.startConference(participants, Convert.toLegacy(profile)); }
-+        catch (RemoteException e) { throw rethrow("startConference", e); }
++        catch (RemoteException e) { failed("startConference", e); }
 +    }
 +
 +    @Override
 +    public void accept(int callType, ImsStreamMediaProfile profile) {
 +        try { mLegacy.accept(callType, Convert.toLegacy(profile)); }
-+        catch (RemoteException e) { throw rethrow("accept", e); }
++        catch (RemoteException e) { failed("accept", e); }
 +    }
 +
 +    @Override
 +    public void reject(int reason) {
-+        try { mLegacy.reject(reason); } catch (RemoteException e) { throw rethrow("reject", e); }
++        try { mLegacy.reject(reason); } catch (RemoteException e) { failed("reject", e); }
 +    }
 +
 +    @Override
 +    public void terminate(int reason) {
-+        try { mLegacy.terminate(reason); } catch (RemoteException e) { throw rethrow("terminate", e); }
++        try { mLegacy.terminate(reason); } catch (RemoteException e) { failed("terminate", e); }
 +    }
 +
 +    @Override
 +    public void hold(ImsStreamMediaProfile profile) {
 +        try { mLegacy.hold(Convert.toLegacy(profile)); }
-+        catch (RemoteException e) { throw rethrow("hold", e); }
++        catch (RemoteException e) { failed("hold", e); }
 +    }
 +
 +    @Override
 +    public void resume(ImsStreamMediaProfile profile) {
 +        try { mLegacy.resume(Convert.toLegacy(profile)); }
-+        catch (RemoteException e) { throw rethrow("resume", e); }
++        catch (RemoteException e) { failed("resume", e); }
 +    }
 +
 +    @Override
 +    public void merge() {
-+        try { mLegacy.merge(); } catch (RemoteException e) { throw rethrow("merge", e); }
++        try { mLegacy.merge(); } catch (RemoteException e) { failed("merge", e); }
 +    }
 +
 +    @Override
 +    public void update(int callType, ImsStreamMediaProfile profile) {
 +        try { mLegacy.update(callType, Convert.toLegacy(profile)); }
-+        catch (RemoteException e) { throw rethrow("update", e); }
++        catch (RemoteException e) { failed("update", e); }
 +    }
 +
 +    @Override
 +    public void extendToConference(String[] participants) {
 +        try { mLegacy.extendToConference(participants); }
-+        catch (RemoteException e) { throw rethrow("extendToConference", e); }
++        catch (RemoteException e) { failed("extendToConference", e); }
 +    }
 +
 +    @Override
 +    public void inviteParticipants(String[] participants) {
 +        try { mLegacy.inviteParticipants(participants); }
-+        catch (RemoteException e) { throw rethrow("inviteParticipants", e); }
++        catch (RemoteException e) { failed("inviteParticipants", e); }
 +    }
 +
 +    @Override
 +    public void removeParticipants(String[] participants) {
 +        try { mLegacy.removeParticipants(participants); }
-+        catch (RemoteException e) { throw rethrow("removeParticipants", e); }
++        catch (RemoteException e) { failed("removeParticipants", e); }
 +    }
 +
 +    @Override
 +    public void sendDtmf(char c, Message result) {
-+        try { mLegacy.sendDtmf(c, result); } catch (RemoteException e) { throw rethrow("sendDtmf", e); }
++        try { mLegacy.sendDtmf(c, result); } catch (RemoteException e) { failed("sendDtmf", e); }
 +    }
 +
 +    @Override
 +    public void startDtmf(char c) {
-+        try { mLegacy.startDtmf(c); } catch (RemoteException e) { throw rethrow("startDtmf", e); }
++        try { mLegacy.startDtmf(c); } catch (RemoteException e) { failed("startDtmf", e); }
 +    }
 +
 +    @Override
 +    public void stopDtmf() {
-+        try { mLegacy.stopDtmf(); } catch (RemoteException e) { throw rethrow("stopDtmf", e); }
++        try { mLegacy.stopDtmf(); } catch (RemoteException e) { failed("stopDtmf", e); }
 +    }
 +
 +    @Override
 +    public void sendUssd(String ussdMessage) {
-+        try { mLegacy.sendUssd(ussdMessage); } catch (RemoteException e) { throw rethrow("sendUssd", e); }
++        try { mLegacy.sendUssd(ussdMessage); } catch (RemoteException e) { failed("sendUssd", e); }
 +    }
 +
 +    @Override
@@ -1574,7 +1614,7 @@ index 00000000..9a3d1a17
 +    @Override
 +    public boolean isMultiparty() {
 +        try { return mLegacy.isMultiparty(); }
-+        catch (RemoteException e) { throw rethrow("isMultiparty", e); }
++        catch (RemoteException e) { failed("isMultiparty", e); return false; }
 +    }
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/ConfigWrapper.java b/ims/bridge/src/org/lineageos/ims/bridge/ConfigWrapper.java
@@ -1971,10 +2011,10 @@ index 00000000..b7c23b98
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java b/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
 new file mode 100644
-index 00000000..7ec31abe
+index 00000000..8def6abf
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/LegacyMMTelFeature.java
-@@ -0,0 +1,344 @@
+@@ -0,0 +1,469 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.app.PendingIntent;
@@ -1997,6 +2037,8 @@ index 00000000..7ec31abe
 +
 +import com.lge.imslegacy.internal.IImsService;
 +
++import java.util.concurrent.atomic.AtomicBoolean;
++
 +/**
 + * Presents the OEM app's 7.0 IImsService (com.lge.imslegacy.internal) to the platform as a modern
 + * MMTelFeature.
@@ -2009,9 +2051,15 @@ index 00000000..7ec31abe
 + *
 + * Ims4 registers itself as "ims" with ServiceManager; it is not a bound service.
 + *
-+ * Note that no MMTelFeature method declares RemoteException, while every legacy call throws it. The
-+ * conversion is deliberate and happens in one place, callLegacy-style, rather than being swallowed
-+ * per call site: a dead IMS service should surface, not read as "feature present but idle".
++ * Note that no MMTelFeature method declares RemoteException, while every legacy call throws it.
++ *
++ * Nothing here may throw. These methods run on a binder thread serving com.android.phone, and
++ * binder marshals IllegalStateException and friends straight through to the caller --
++ * ImsServiceControllerCompat does not catch RuntimeException, so an exception thrown out of this
++ * class is a fatal crash in the framework's phone process. That process then restarts, ImsResolver
++ * rebinds this service, the same call throws again, and the handset is unusable for as long as the
++ * legacy service stays away. The API's own channel for "this feature is down" is the feature state,
++ * so report it there and return something benign.
 + */
 +public class LegacyMMTelFeature extends MMTelFeature {
 +    private static final String TAG = ImsBridgeService.TAG;
@@ -2024,6 +2072,7 @@ index 00000000..7ec31abe
 +    private final int mSlotId;
 +    private int mServiceId = INVALID_SERVICE_ID;
 +    private final RegistrationListenerAdapter mRegistration = new RegistrationListenerAdapter();
++    private final AtomicBoolean mAwaiting = new AtomicBoolean();
 +
 +    LegacyMMTelFeature(int slotId) {
 +        mSlotId = slotId;
@@ -2044,16 +2093,45 @@ index 00000000..7ec31abe
 +     * rather than blocking the binder thread that created the feature.
 +     */
 +    private void awaitLegacyService() {
++        // Ims4 dying and being restarted re-runs this, so guard against stacking up waiters: the
++        // wait is indefinite, and one failing call per second would otherwise be one thread per
++        // second, all blocked on the same name.
++        if (!mAwaiting.compareAndSet(false, true)) {
++            return;
++        }
 +        new Thread(() -> {
-+            IBinder b = ServiceManager.waitForService("ims");
-+            if (b == null) {
-+                Log.e(TAG, "slot " + mSlotId + ": ims service never appeared; feature stays down");
-+                setFeatureState(ImsFeature.STATE_NOT_AVAILABLE);
-+                return;
++            try {
++                IBinder b = ServiceManager.waitForService("ims");
++                if (b == null) {
++                    Log.e(TAG, "slot " + mSlotId
++                            + ": ims service never appeared; feature stays down");
++                    setFeatureState(ImsFeature.STATE_NOT_AVAILABLE);
++                    return;
++                }
++                watchForDeath(b);
++                Log.i(TAG, "slot " + mSlotId + ": legacy ims service present, feature READY");
++                setFeatureState(ImsFeature.STATE_READY);
++            } finally {
++                mAwaiting.set(false);
 +            }
-+            Log.i(TAG, "slot " + mSlotId + ": legacy ims service present, feature READY");
-+            setFeatureState(ImsFeature.STATE_READY);
 +        }, "ImsBridge-await").start();
++    }
++
++    /**
++     * Ims4 is a separate process and crashes on its own (a property it is not allowed to set is
++     * enough). Without this the feature stays READY over a service that is gone, and every
++     * framework call into it has to discover that the hard way.
++     */
++    private void watchForDeath(IBinder b) {
++        try {
++            b.linkToDeath(() -> {
++                Log.w(TAG, "slot " + mSlotId + ": legacy ims service died");
++                markDown("binderDied");
++            }, 0);
++        } catch (RemoteException e) {
++            // Already dead between waitForService and here.
++            markDown("linkToDeath");
++        }
 +    }
 +
 +    private IImsService legacyOrNull() {
@@ -2065,24 +2143,50 @@ index 00000000..7ec31abe
 +        return IImsService.Stub.asInterface(b);
 +    }
 +
-+    private IImsService legacy() {
++    /**
++     * The legacy service for a call, or null if it is not there -- in which case the feature is
++     * taken down and a waiter armed for its return.
++     *
++     * Only from READY: before that the constructor's waiter is still running and a missing service
++     * is just the startup race, not a fault. Reporting NOT_AVAILABLE there would have the framework
++     * give up on a feature that is seconds away from working.
++     */
++    private IImsService legacyOrDown(String what) {
 +        IImsService s = legacyOrNull();
-+        if (s == null) {
-+            throw new IllegalStateException("legacy ims service unavailable");
++        if (s == null && getFeatureState() == ImsFeature.STATE_READY) {
++            markDown(what);
 +        }
 +        return s;
 +    }
 +
-+    private static RuntimeException rethrow(String what, RemoteException e) {
++    /** Report the feature down and wait for the legacy service to come back. */
++    private void markDown(String what) {
++        Log.w(TAG, "slot " + mSlotId + ": " + what
++                + " with no legacy ims service; feature NOT_AVAILABLE");
++        setFeatureState(ImsFeature.STATE_NOT_AVAILABLE);
++        awaitLegacyService();
++    }
++
++    /**
++     * A call that failed across the bridge. Logged and absorbed, never rethrown -- see the note on
++     * the class. A RemoteException here is usually the service having died mid-transaction, so
++     * treat it the same as finding it absent; if it is in fact alive, the waiter returns at once
++     * and the feature is READY again.
++     */
++    private void failed(String what, RemoteException e) {
 +        Log.e(TAG, what + " failed across the bridge", e);
-+        return new RuntimeException(what + ": " + e.getMessage(), e);
++        markDown(what);
 +    }
 +
 +    @Override
 +    public int startSession(PendingIntent incomingCallIntent, IImsRegistrationListener listener) {
++        IImsService svc = legacyOrDown("startSession");
++        if (svc == null) {
++            return INVALID_SERVICE_ID;
++        }
 +        try {
 +            mRegistration.add(listener);
-+            mServiceId = legacy().open(mSlotId, SERVICE_CLASS_MMTEL, incomingCallIntent,
++            mServiceId = svc.open(mSlotId, SERVICE_CLASS_MMTEL, incomingCallIntent,
 +                    mRegistration);
 +            Log.i(TAG, "slot " + mSlotId + ": legacy session open, serviceId=" + mServiceId);
 +            // State is published by awaitLegacyService(); the framework only reaches this method
@@ -2095,7 +2199,8 @@ index 00000000..7ec31abe
 +            probeFeatureBitmapIfMissing();
 +            return mServiceId;
 +        } catch (RemoteException e) {
-+            throw rethrow("startSession", e);
++            failed("startSession", e);
++            return INVALID_SERVICE_ID;
 +        }
 +    }
 +
@@ -2114,8 +2219,11 @@ index 00000000..7ec31abe
 +                    + mRegistration.hasFeatureBitmap() + ")");
 +            return;
 +        }
++        IImsService s = legacyOrDown("probeFeatureBitmap");
++        if (s == null) {
++            return;
++        }
 +        try {
-+            IImsService s = legacy();
 +            // isConnected(NORMAL, 0) is UCStateTracker.isRegistered(); isConnected(NORMAL, VOICE)
 +            // additionally demands isVoiceCallSupported() && isVoiceCallRegistered(), LG UC-layer
 +            // flags fed by provisioning this stack will not let us write (setProvisionedValue is
@@ -2169,20 +2277,30 @@ index 00000000..7ec31abe
 +    @Override
 +    public boolean isConnected(int callSessionType, int callType) {
 +        if (mServiceId == INVALID_SERVICE_ID) return false;
++        IImsService svc = legacyOrDown("isConnected");
++        if (svc == null) {
++            return false;
++        }
 +        try {
-+            return legacy().isConnected(mServiceId, callSessionType, callType);
++            return svc.isConnected(mServiceId, callSessionType, callType);
 +        } catch (RemoteException e) {
-+            throw rethrow("isConnected", e);
++            failed("isConnected", e);
++            return false;
 +        }
 +    }
 +
 +    @Override
 +    public boolean isOpened() {
 +        if (mServiceId == INVALID_SERVICE_ID) return false;
++        IImsService svc = legacyOrDown("isOpened");
++        if (svc == null) {
++            return false;
++        }
 +        try {
-+            return legacy().isOpened(mServiceId);
++            return svc.isOpened(mServiceId);
 +        } catch (RemoteException e) {
-+            throw rethrow("isOpened", e);
++            failed("isOpened", e);
++            return false;
 +        }
 +    }
 +
@@ -2200,38 +2318,55 @@ index 00000000..7ec31abe
 +
 +    @Override
 +    public ImsCallProfile createCallProfile(int sessionId, int callSessionType, int callType) {
++        IImsService svc = legacyOrDown("createCallProfile");
++        if (svc == null) {
++            return null;
++        }
 +        try {
 +            return Convert.toModern(
-+                    legacy().createCallProfile(sessionId, callSessionType, callType));
++                    svc.createCallProfile(sessionId, callSessionType, callType));
 +        } catch (RemoteException e) {
-+            throw rethrow("createCallProfile", e);
++            failed("createCallProfile", e);
++            return null;
 +        }
 +    }
 +
 +    @Override
 +    public void turnOnIms() {
++        IImsService svc = legacyOrDown("turnOnIms");
++        if (svc == null) {
++            return;
++        }
 +        try {
-+            legacy().turnOnIms(mSlotId);
++            svc.turnOnIms(mSlotId);
 +        } catch (RemoteException e) {
-+            throw rethrow("turnOnIms", e);
++            failed("turnOnIms", e);
 +        }
 +    }
 +
 +    @Override
 +    public void turnOffIms() {
++        IImsService svc = legacyOrDown("turnOffIms");
++        if (svc == null) {
++            return;
++        }
 +        try {
-+            legacy().turnOffIms(mSlotId);
++            svc.turnOffIms(mSlotId);
 +        } catch (RemoteException e) {
-+            throw rethrow("turnOffIms", e);
++            failed("turnOffIms", e);
 +        }
 +    }
 +
 +    @Override
 +    public void setUiTTYMode(int uiTtyMode, Message onComplete) {
++        IImsService svc = legacyOrDown("setUiTTYMode");
++        if (svc == null) {
++            return;
++        }
 +        try {
-+            legacy().setUiTTYMode(mServiceId, uiTtyMode, onComplete);
++            svc.setUiTTYMode(mServiceId, uiTtyMode, onComplete);
 +        } catch (RemoteException e) {
-+            throw rethrow("setUiTTYMode", e);
++            failed("setUiTTYMode", e);
 +        }
 +    }
 +
@@ -2244,12 +2379,16 @@ index 00000000..7ec31abe
 +    @Override
 +    public IImsCallSession createCallSession(int sessionId, ImsCallProfile profile,
 +            IImsCallSessionListener listener) {
++        IImsService svc = legacyOrDown("createCallSession");
++        if (svc == null) {
++            return null;
++        }
 +        try {
 +            // The listener is attached to the wrapper, not passed down: 7.0 takes it at creation
 +            // while the modern side may also call setListener later, and routing both through the
 +            // one adapter keeps a single path back to the framework.
 +            com.lge.imslegacy.internal.IImsCallSession s =
-+                    legacy().createCallSession(sessionId, Convert.toLegacy(profile), null);
++                    svc.createCallSession(sessionId, Convert.toLegacy(profile), null);
 +            if (s == null) {
 +                Log.w(TAG, "createCallSession returned null from the legacy service");
 +                return null;
@@ -2260,62 +2399,88 @@ index 00000000..7ec31abe
 +            }
 +            return w;
 +        } catch (RemoteException e) {
-+            throw rethrow("createCallSession", e);
++            failed("createCallSession", e);
++            return null;
 +        }
 +    }
 +
 +    @Override
 +    public IImsCallSession getPendingCallSession(int sessionId, String callId) {
++        IImsService svc = legacyOrDown("getPendingCallSession");
++        if (svc == null) {
++            return null;
++        }
 +        try {
 +            com.lge.imslegacy.internal.IImsCallSession s =
-+                    legacy().getPendingCallSession(sessionId, callId);
++                    svc.getPendingCallSession(sessionId, callId);
 +            // Marked incoming: this is the only path an MT session arrives by, and the listener
 +            // adapter has to tell MT from MO to deliver a pre-answer hangup correctly.
 +            return s == null ? null : new CallSessionWrapper(s, true);
 +        } catch (RemoteException e) {
-+            throw rethrow("getPendingCallSession", e);
++            failed("getPendingCallSession", e);
++            return null;
 +        }
 +    }
 +
 +    @Override
 +    public ImsUtImplBase getUtInterface() {
++        IImsService svc = legacyOrDown("getUtInterface");
++        if (svc == null) {
++            return null;
++        }
 +        try {
-+            com.lge.imslegacy.internal.IImsUt u = legacy().getUtInterface(mServiceId);
++            com.lge.imslegacy.internal.IImsUt u = svc.getUtInterface(mServiceId);
 +            return u == null ? null : new UtWrapper(u);
 +        } catch (RemoteException e) {
-+            throw rethrow("getUtInterface", e);
++            failed("getUtInterface", e);
++            return null;
 +        }
 +    }
 +
 +    @Override
 +    public IImsConfig getConfigInterface() {
++        IImsService svc = legacyOrDown("getConfigInterface");
++        if (svc == null) {
++            return null;
++        }
 +        try {
 +            // Config is keyed by phone id on 7.0, not by the session's serviceId.
-+            com.lge.imslegacy.internal.IImsConfig c = legacy().getConfigInterface(mSlotId);
++            com.lge.imslegacy.internal.IImsConfig c = svc.getConfigInterface(mSlotId);
 +            return c == null ? null : new ConfigWrapper(c);
 +        } catch (RemoteException e) {
-+            throw rethrow("getConfigInterface", e);
++            failed("getConfigInterface", e);
++            return null;
 +        }
 +    }
 +
 +    @Override
 +    public ImsEcbmImplBase getEcbmInterface() {
++        IImsService svc = legacyOrDown("getEcbmInterface");
++        if (svc == null) {
++            return null;
++        }
 +        try {
-+            com.lge.imslegacy.internal.IImsEcbm ecbm = legacy().getEcbmInterface(mServiceId);
++            com.lge.imslegacy.internal.IImsEcbm ecbm = svc.getEcbmInterface(mServiceId);
 +            return ecbm == null ? null : new EcbmWrapper(ecbm);
 +        } catch (RemoteException e) {
-+            throw rethrow("getEcbmInterface", e);
++            failed("getEcbmInterface", e);
++            return null;
 +        }
 +    }
 +
 +    @Override
 +    public ImsMultiEndpointImplBase getMultiEndpointInterface() {
++        IImsService svc = legacyOrDown("getMultiEndpointInterface");
++        if (svc == null) {
++            return null;
++        }
 +        try {
 +            com.lge.imslegacy.internal.IImsMultiEndpoint m =
-+                    legacy().getMultiEndpointInterface(mServiceId);
++                    svc.getMultiEndpointInterface(mServiceId);
 +            return m == null ? null : new MultiEndpointWrapper(m);
 +        } catch (RemoteException e) {
-+            throw rethrow("getMultiEndpointInterface", e);
++            failed("getMultiEndpointInterface", e);
++            return null;
 +        }
 +    }
 +}

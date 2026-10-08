@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 19:59:08 -0400
+Subject: [PATCH] msm8996-common: drop UnifiedSettingsApp
+
+The device side stops extracting it; this is the generated half that
+actually builds and installs it. The app crashes on Application.onCreate
+on this branch -- it registers a receiver without RECEIVER_EXPORTED or
+RECEIVER_NOT_EXPORTED, mandatory since Android 14 -- and is restarted on
+a timer, so it produces a steady stream of "keeps stopping"
+notifications rather than one failure.
+---
+ Android.bp               | 11 -----------
+ msm8996-common-vendor.mk |  1 -
+ 2 files changed, 12 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index a1fa22b..12fd4a2 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -4429,17 +4429,6 @@ android_app_import {
+ 	privileged: true,
+ }
+ 
+-android_app_import {
+-	name: "UnifiedSettingsApp",
+-	owner: "lge",
+-	apk: "proprietary/system/priv-app/UnifiedSettingsApp/UnifiedSettingsApp.apk",
+-	certificate: "platform",
+-	dex_preopt: {
+-		enabled: false,
+-	},
+-	privileged: true,
+-}
+-
+ android_app_import {
+ 	name: "CneApp",
+ 	owner: "lge",
+diff --git a/msm8996-common-vendor.mk b/msm8996-common-vendor.mk
+index 482154f..3bc43ad 100644
+--- a/msm8996-common-vendor.mk
++++ b/msm8996-common-vendor.mk
+@@ -389,7 +389,6 @@ PRODUCT_PACKAGES += \
+     VZWAPNLib \
+     SprintDM \
+     SprintHM \
+-    UnifiedSettingsApp \
+     CneApp \
+     IWlanService \
+     QtiTelephonyService \

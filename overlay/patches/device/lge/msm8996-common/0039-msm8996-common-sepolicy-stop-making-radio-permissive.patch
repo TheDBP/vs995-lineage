@@ -25,21 +25,35 @@ enforcing.
 
 The IPsec helpers already spelled out their radio-side rules, so only their
 stale 'radio is permissive' comment needed correcting.
+
+persist.lg.data.* belongs in the same set despite the name: BootupGovVZW
+sets allow_ims_roam from operatorSpecificImsBootCompleted, and without a
+label it is default_prop, which radio may not set. That is not a denial
+that can be ignored -- SystemProperties.set throws on refusal, so Ims4
+dies in its own boot handler:
+
+  avc: denied { set } for property=persist.lg.data.allow_ims_roam
+       scontext=u:r:radio:s0 tcontext=u:object_r:default_prop:s0
+  com.lge.ims FATAL: failed to set system property
+    at BootupGovVZW.operatorSpecificImsBootCompleted(BootupGovVZW.java:132)
+
+The "ims" binder service then never registers and there is no VoLTE for
+the rest of the boot. Nothing else on this device uses the prefix.
 ---
- sepolicy/private/ims.te            | 36 +++++++++++++++++++++++++-----
+ sepolicy/private/ims.te            | 37 ++++++++++++++++++++++++++----
  sepolicy/private/lge_ims_ipsec.te  |  4 ++--
  sepolicy/private/lge_ims_prop.te   |  3 +++
- sepolicy/private/property_contexts |  6 +++++
+ sepolicy/private/property_contexts | 12 ++++++++++
  sepolicy/private/service_contexts  |  7 ++++++
- 5 files changed, 49 insertions(+), 7 deletions(-)
+ 5 files changed, 56 insertions(+), 7 deletions(-)
  create mode 100644 sepolicy/private/lge_ims_prop.te
  create mode 100644 sepolicy/private/service_contexts
 
 diff --git a/sepolicy/private/ims.te b/sepolicy/private/ims.te
-index 02455570..270bc8a0 100644
+index 02455570..47b1457a 100644
 --- a/sepolicy/private/ims.te
 +++ b/sepolicy/private/ims.te
-@@ -1,5 +1,31 @@
+@@ -1,5 +1,32 @@
 -# LG IMS (VoLTE) bringup -- com.lge.ims runs in the radio domain (android.uid.phone). The 2016 stack
 -# sets net.ims.* properties, opens QMI sockets, reads config files. BRINGUP: make radio permissive to
 -# surface every denial in one pass (userdebug only); replace with the audit2allow'd rules + remove this
@@ -74,7 +88,8 @@ index 02455570..270bc8a0 100644
 +allowxperm radio self:socket ioctl { 0xc300-0xc30f };
 +
 +# net.ims.* is the registration/operator state the stack publishes; persist.lg.ims.* is its own
-+# saved state. Both are labelled in property_contexts next to this file.
++# saved state, and persist.lg.data.* its VoLTE roaming flag. All three are labelled in
++# property_contexts next to this file.
 +set_prop(radio, lge_ims_prop)
 diff --git a/sepolicy/private/lge_ims_ipsec.te b/sepolicy/private/lge_ims_ipsec.te
 index 209ef797..d7a918ea 100644
@@ -101,19 +116,25 @@ index 00000000..bfb5ef0b
 +# a system_property_type, which a coredomain is allowed to set.
 +system_internal_prop(lge_ims_prop)
 diff --git a/sepolicy/private/property_contexts b/sepolicy/private/property_contexts
-index 7215af0b..9a7dedc9 100644
+index 7215af0b..8faefc4d 100644
 --- a/sepolicy/private/property_contexts
 +++ b/sepolicy/private/property_contexts
-@@ -1,3 +1,9 @@
+@@ -1,3 +1,15 @@
  # ipsecstarter starts/stops ipsecclient (lge_ims_ipsec.te)
  ctl.start$ipsecclient    u:object_r:ctl_ipsec_prop:s0
  ctl.stop$ipsecclient     u:object_r:ctl_ipsec_prop:s0
 +
 +# LG IMS state. system_internal_prop because radio is a coredomain, which may only set a
-+# system_property_type; net.ims.* would otherwise be system_prop and persist.lg.ims.* default_prop,
-+# neither of which radio may set.
++# system_property_type; net.ims.* would otherwise be system_prop and the persist.lg.* ones
++# default_prop, neither of which radio may set.
++#
++# persist.lg.data. is the same stack despite the name: BootupGovVZW sets allow_ims_roam from
++# operatorSpecificImsBootCompleted. Missing it is not a denial you can ignore -- SystemProperties
++# .set throws on refusal, so Ims4 dies in its boot handler, the "ims" binder service never
++# registers, and VoLTE is gone for the boot. Nothing else on this device uses the prefix.
 +net.ims.                 u:object_r:lge_ims_prop:s0 prefix
 +persist.lg.ims.          u:object_r:lge_ims_prop:s0 prefix
++persist.lg.data.         u:object_r:lge_ims_prop:s0 prefix
 diff --git a/sepolicy/private/service_contexts b/sepolicy/private/service_contexts
 new file mode 100644
 index 00000000..8de0ca97
