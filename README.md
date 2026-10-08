@@ -141,6 +141,7 @@ build with `EXTRA_OPTIONS=`. This table is generated from the forge by
 | `pong-notification` | Pong as the default notification sound (LineageOS default is Argon). |
 | `root` | Magisk baked into the boot image, so the zip flashes pre-rooted. Pulls in `termoneplus`. The image flashes pre-rooted, so treat it like one. |
 | `setup-mobile-data` | Mobile data usable during setup, instead of a sign-in page with no way online but Wi-Fi. |
+| `setupwizard-lineage` | Use Lineage SetupWizard over Google's (WITH_GAPPS). |
 | `setupwizard-nag-skip` | Skip recovery/metrics/backup setup pages. |
 | `syncthing-fork` | Syncthing-Fork: continuous file sync between your own devices, no server or account. Pulls in `fdroid`. |
 | `teal-skin` | Teal accent — fixed #009D94 Monet preset seed. |
