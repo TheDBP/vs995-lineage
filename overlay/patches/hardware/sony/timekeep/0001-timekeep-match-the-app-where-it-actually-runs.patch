@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 07:57:15 -0400
+Subject: [PATCH] timekeep: match the app where it actually runs
+
+The seapp_contexts entry requires user=system, but the app declares no
+sharedUserId, so it runs under its own app uid and the rule never
+matches. It falls through to platform_app, which may not set the
+vendor_timekeep_prop this policy already grants vendor_timekeep_app --
+and SystemProperties.set throws on refusal:
+
+  com.sony.timekeep FATAL: failed to set system property
+    "persist.vendor.timeadjust" at TimeKeep receiver
+
+So the receiver dies on every TIME_SET and the save half of timekeep has
+never run, while vendor.timekeep-restore keeps restoring an increasingly
+stale clock. Matching on user=_app, in the form plat_seapp_contexts uses
+for a platform-signed app domain, puts it in the domain whose rules were
+written for it.
+---
+ sepolicy/vendor/seapp_contexts | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/sepolicy/vendor/seapp_contexts b/sepolicy/vendor/seapp_contexts
+index f0e9bc8..ed765ba 100644
+--- a/sepolicy/vendor/seapp_contexts
++++ b/sepolicy/vendor/seapp_contexts
+@@ -1 +1,7 @@
+-user=system seinfo=platform name=com.sony.timekeep domain=vendor_timekeep_app
++# The app has no sharedUserId, so it runs under its own app uid and user=system never matched:
++# it fell through to platform_app, which may not set the vendor_timekeep_prop this policy
++# already grants vendor_timekeep_app. SystemProperties.set throws on refusal, so the receiver
++# died on every TIME_SET and the save half of timekeep never ran -- while the restore half
++# (vendor.timekeep-restore) happily restored an increasingly stale clock.
++# Matches the form plat_seapp_contexts uses for a platform-signed app domain (traceur_app).
++user=_app seinfo=platform name=com.sony.timekeep domain=vendor_timekeep_app type=app_data_file levelFrom=all

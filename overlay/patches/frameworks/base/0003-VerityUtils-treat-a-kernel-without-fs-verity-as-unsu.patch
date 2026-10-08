@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 07:56:59 -0400
+Subject: [PATCH] VerityUtils: treat a kernel without fs-verity as unsupported,
+ not failed
+
+setUpFsverity throws on any non-zero errno. A kernel built without
+CONFIG_FS_VERITY answers FS_IOC_ENABLE_VERITY with ENOTTY, so on this
+device every PackageManager state write throws and is logged with a
+full stack trace:
+
+  Failed to enable fs-verity on FD(2486): Inappropriate ioctl for device
+
+That is ~550 error lines a boot between ResilientAtomicFile and
+AccessPersistence, which is enough noise to hide the failures worth
+reading. The method's own contract is "enables fs-verity, if supported
+by the filesystem", and ENOTTY/EOPNOTSUPP is exactly the filesystem
+saying it is not. Return quietly; nothing is lost that the kernel could
+have provided. Any other errno still throws.
+---
+ core/java/com/android/internal/security/VerityUtils.java | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/core/java/com/android/internal/security/VerityUtils.java b/core/java/com/android/internal/security/VerityUtils.java
+index ac186d0a26b5..9e7f855476da 100644
+--- a/core/java/com/android/internal/security/VerityUtils.java
++++ b/core/java/com/android/internal/security/VerityUtils.java
+@@ -71,6 +71,14 @@ public abstract class VerityUtils {
+     /** Enables fs-verity for an open file without signature. */
+     public static void setUpFsverity(int fd) throws IOException {
+         int errno = enableFsverityForFdNative(fd);
++        // "Enables fs-verity, if supported by the filesystem" is the contract, and a kernel without
++        // CONFIG_FS_VERITY answers the ioctl with ENOTTY. Treating that as a failure means every
++        // PackageManager state write throws and is logged with a full stack: ~550 error lines a boot
++        // from ResilientAtomicFile and AccessPersistence alone, which buries the failures that
++        // matter. Nothing is lost that the kernel could have provided.
++        if (errno == OsConstants.ENOTTY || errno == OsConstants.EOPNOTSUPP) {
++            return;
++        }
+         if (errno != 0) {
+             throw new IOException("Failed to enable fs-verity on FD(" + fd + "): "
+                     + Os.strerror(errno));

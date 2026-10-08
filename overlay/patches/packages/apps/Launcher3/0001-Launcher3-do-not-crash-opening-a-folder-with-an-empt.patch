@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 07:57:15 -0400
+Subject: [PATCH] Launcher3: do not crash opening a folder with an empty
+ preview
+
+getAnimationData reads itemsInPreview[0] to get a base icon size. A
+folder can be opened with nothing on its preview page -- the last item
+dragged out, or children that have not bound yet -- and the
+IndexOutOfBoundsException propagates out of
+ItemClickHandler.onClickFolderIcon and takes the launcher down:
+
+  java.lang.IndexOutOfBoundsException: Index 0 out of bounds for length 0
+    at FolderAnimationData$Factory.getAnimationData(FolderAnimationData.kt:77)
+    at Folder.animateOpen -> ItemClickHandler.onClickFolderIcon
+
+Fall back to the workspace profile's icon size, which is what the
+preview items would have reported anyway.
+---
+ src/com/android/launcher3/folder/FolderAnimationData.kt | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/com/android/launcher3/folder/FolderAnimationData.kt b/src/com/android/launcher3/folder/FolderAnimationData.kt
+index 36efa9f046..df3146d917 100644
+--- a/src/com/android/launcher3/folder/FolderAnimationData.kt
++++ b/src/com/android/launcher3/folder/FolderAnimationData.kt
+@@ -74,7 +74,13 @@ data class FolderAnimationData(
+                     folderIconWorkspacePosition,
+                 )
+             val scaledFolderRadius: Int = previewBackground.scaledRadius
+-            val baseIconSize: Float = getBubbleTextView(itemsInPreview[0]).iconSize.toFloat()
++            // A folder can be opened with nothing in its preview page -- the last item dragged
++            // out, or children that have not bound yet -- and indexing [0] there crashed the whole
++            // launcher from ItemClickHandler.onClickFolderIcon. Fall back to the profile's icon
++            // size, which is what the preview items would have reported anyway.
++            val baseIconSize: Float =
++                itemsInPreview.firstOrNull()?.let { getBubbleTextView(it).iconSize.toFloat() }
++                    ?: mActivityContext.deviceProfile.workspaceProfile.iconSizePx.toFloat()
+             val initialFolderSize = (scaledFolderRadius * 2) * scaleRelativeToDragLayer
+             val initialFolderScale = previewSize / baseIconSize * scaleRelativeToDragLayer
+ 

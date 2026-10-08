@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 07:56:57 -0400
+Subject: [PATCH] hwui: fall back to F_SEAL_WRITE where the kernel has no
+ future-write seal
+
+writeBlob seals the memfd it parcels a bitmap through with F_SEAL_GROW |
+F_SEAL_SHRINK, plus F_SEAL_FUTURE_WRITE when the bitmap is immutable.
+That seal arrived in Linux 5.1; this device runs 4.4, whose fcntl.h
+knows only SEAL, SHRINK, GROW and WRITE. memfd_add_seals validates the
+whole request against the seals it has and rejects all of it with
+EINVAL, so every immutable bitmap big enough to take the ashmem path
+fails to parcel.
+
+It surfaces a long way from here. The one that found it was
+Settings crashing on sign-in:
+
+  UserSettings.assignDefaultPhoto -> UserManager.setUserIcon
+  -> Bitmap.writeToParcel: java.lang.RuntimeException:
+     Could not copy bitmap to parcel blob.
+
+but nothing about it is specific to user icons: any immutable bitmap
+over BLOB_MAX_INPLACE_LIMIT crossing a binder boundary hits it, and
+smaller ones only escape by going in-place.
+
+The comment already in the code is the licence for the fallback: it says
+the two seals are functionally equivalent here because no writable
+mappings have been made yet, and the pre-6.7 bug F_SEAL_FUTURE_WRITE
+avoids cannot apply to a kernel older than the seal itself. So retry
+with F_SEAL_WRITE, and only on EINVAL for an immutable bitmap.
+---
+ libs/hwui/jni/Bitmap.cpp | 29 ++++++++++++++++++-----------
+ 1 file changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/libs/hwui/jni/Bitmap.cpp b/libs/hwui/jni/Bitmap.cpp
+index d97d1bca4616..b016ccc3dc13 100644
+--- a/libs/hwui/jni/Bitmap.cpp
++++ b/libs/hwui/jni/Bitmap.cpp
+@@ -807,17 +807,24 @@ static binder_status_t writeBlob(AParcel* parcel, uint64_t bitmapId, const SkBit
+             return STATUS_NO_MEMORY;
+         }
+ 
+-        if (fcntl(fd, F_ADD_SEALS,
+-                    // Disallow growing / shrinking.
+-                    F_SEAL_GROW | F_SEAL_SHRINK
+-                    // If immutable, disallow writing.
+-                    // Use F_SEAL_FUTURE_WRITE instead of F_SEAL_WRITE to work around a bug in
+-                    // pre-6.7 kernels.
+-                    // There are no writable mappings made prior to this, so both seals are
+-                    // functionally equivalent.
+-                    // See: b/409846908#comment39
+-                    | (immutable ? F_SEAL_FUTURE_WRITE : 0))) {
+-            return STATUS_UNKNOWN_ERROR;
++        // Disallow growing / shrinking, and if immutable disallow writing.
++        // Use F_SEAL_FUTURE_WRITE instead of F_SEAL_WRITE to work around a bug in pre-6.7 kernels.
++        // There are no writable mappings made prior to this, so both seals are functionally
++        // equivalent.
++        // See: b/409846908#comment39
++        const int sealsBase = F_SEAL_GROW | F_SEAL_SHRINK;
++        if (fcntl(fd, F_ADD_SEALS, sealsBase | (immutable ? F_SEAL_FUTURE_WRITE : 0))) {
++            // F_SEAL_FUTURE_WRITE arrived in Linux 5.1. On an older kernel memfd_add_seals
++            // validates the whole request against the seals it knows and rejects all of it with
++            // EINVAL, so every immutable bitmap large enough to go through ashmem fails to
++            // parcel -- which surfaces far from here as "Could not copy bitmap to parcel blob".
++            // The comment above is the licence to fall back: with no writable mappings yet, plain
++            // F_SEAL_WRITE is equivalent, and the pre-6.7 bug it avoids cannot apply on a kernel
++            // that predates the seal itself.
++            if (!immutable || errno != EINVAL
++                    || fcntl(fd, F_ADD_SEALS, sealsBase | F_SEAL_WRITE)) {
++                return STATUS_UNKNOWN_ERROR;
++            }
+         }
+ 
+         // Workaround b/149851140 in AParcel_writeParcelFileDescriptor
