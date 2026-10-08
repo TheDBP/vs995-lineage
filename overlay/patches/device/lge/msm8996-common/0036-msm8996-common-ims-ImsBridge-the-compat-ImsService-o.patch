@@ -109,7 +109,7 @@ dropped call into an unusable handset.
  .../lge/imslegacy/ImsStreamMediaProfile.java  |  41 ++
  .../imslegacy/ImsSuppServiceNotification.java |  54 ++
  .../bridge/CallSessionListenerAdapter.java    | 235 +++++++++
- .../ims/bridge/CallSessionWrapper.java        | 220 ++++++++
+ .../ims/bridge/CallSessionWrapper.java        | 227 +++++++++
  .../lineageos/ims/bridge/ConfigWrapper.java   | 185 +++++++
  .../src/org/lineageos/ims/bridge/Convert.java |  95 ++++
  .../org/lineageos/ims/bridge/EcbmWrapper.java |  51 ++
@@ -123,7 +123,7 @@ dropped call into an unusable handset.
  ims/ims.mk                                    |  13 +
  .../services/Telephony/res/values/config.xml  |   2 +-
  vendor_prop.mk                                |   4 -
- 46 files changed, 2587 insertions(+), 9 deletions(-)
+ 46 files changed, 2594 insertions(+), 9 deletions(-)
  create mode 100644 ims/bridge/Android.bp
  create mode 100644 ims/bridge/AndroidManifest.xml
  create mode 100644 ims/bridge/aidl/android/view/Surface.aidl
@@ -1393,10 +1393,10 @@ index 00000000..08ec50f3
 +}
 diff --git a/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java
 new file mode 100644
-index 00000000..08177b9e
+index 00000000..ad53524d
 --- /dev/null
 +++ b/ims/bridge/src/org/lineageos/ims/bridge/CallSessionWrapper.java
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,227 @@
 +package org.lineageos.ims.bridge;
 +
 +import android.os.Message;
@@ -1420,6 +1420,13 @@ index 00000000..08177b9e
 + */
 +public class CallSessionWrapper extends ImsCallSessionImplBase {
 +    private static final String TAG = ImsBridgeService.TAG;
++
++    /**
++     * No state. The compat ImsCallSessionImplBase exposes no State constants -- the nested
++     * class of that name is on the modern stub, a different type -- and -1 is what the compat
++     * base's own getState() returns.
++     */
++    private static final int STATE_INVALID = -1;
 +
 +    private final IImsCallSession mLegacy;
 +    private final boolean mIncoming;
@@ -1500,7 +1507,7 @@ index 00000000..08177b9e
 +
 +    @Override
 +    public int getState() {
-+        try { return mLegacy.getState(); } catch (RemoteException e) { failed("getState", e); return State.INVALID; }
++        try { return mLegacy.getState(); } catch (RemoteException e) { failed("getState", e); return STATE_INVALID; }
 +    }
 +
 +    @Override
