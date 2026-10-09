@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 21:02:27 -0400
+Subject: [PATCH] v20-common: turn the notification LED on
+
+config_deviceLightCapabilities was 0, which tells the framework the
+device has no lights of any kind. The V20 has a tri-colour LED in the
+front top bezel: PMI8994 qcom,leds@d000 with rgb_0/1/2, LPG driven, so
+colour and breathing both work in hardware.
+
+With 0 the LED stayed dark for notifications and for charging, and
+hal_light_default was left probing an LED nothing used, which is where
+its max_brightness/trigger sysfs denials come from.
+
+11 = LIGHTS_RGB_NOTIFICATION_LED | LIGHTS_RGB_BATTERY_LED |
+LIGHTS_PULSATING_LED.
+
+Confirmed dark on hardware while charging before this change. If a V20
+variant turns out not to have the LED populated, this belongs in the
+per-device tree rather than v20-common.
+---
+ .../lineage-sdk/lineage/res/res/values/config.xml          | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/overlay-lineage/lineage-sdk/lineage/res/res/values/config.xml b/overlay-lineage/lineage-sdk/lineage/res/res/values/config.xml
+index b601e39..c24ab90 100644
+--- a/overlay-lineage/lineage-sdk/lineage/res/res/values/config.xml
++++ b/overlay-lineage/lineage-sdk/lineage/res/res/values/config.xml
+@@ -29,7 +29,12 @@
+ 
+          For example, a device support pulsating, RGB notification and
+          battery LEDs would set this config to 11. -->
+-    <integer name="config_deviceLightCapabilities">0</integer>
++    <!-- The V20 has a tri-colour notification LED: PMI8994 qcom,leds@d000 with rgb_0/1/2, LPG
++         driven, so it does colour and breathing. This was 0, meaning "no lights at all", which left
++         the LED dark for notifications and for charging, and left hal_light_default probing an LED
++         nothing was configured to use (its max_brightness/trigger denials).
++         1 = LIGHTS_RGB_NOTIFICATION_LED, 2 = LIGHTS_RGB_BATTERY_LED, 8 = LIGHTS_PULSATING_LED. -->
++    <integer name="config_deviceLightCapabilities">11</integer>
+ 
+     <!-- Whether device has a notch -->
+     <bool name="config_haveNotch">true</bool>
