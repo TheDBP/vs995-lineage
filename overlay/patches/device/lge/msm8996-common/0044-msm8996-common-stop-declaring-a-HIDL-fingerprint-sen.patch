@@ -36,7 +36,7 @@ made this hard to see.
  1 file changed, 12 insertions(+), 8 deletions(-)
 
 diff --git a/overlay/frameworks/base/core/res/res/values/config.xml b/overlay/frameworks/base/core/res/res/values/config.xml
-index 6a300b05..7b3238cc 100644
+index 6a300b05..5d84322d 100644
 --- a/overlay/frameworks/base/core/res/res/values/config.xml
 +++ b/overlay/frameworks/base/core/res/res/values/config.xml
 @@ -195,14 +195,18 @@
@@ -56,7 +56,7 @@ index 6a300b05..7b3238cc 100644
 +         and a non-empty list makes it construct FingerprintSensorConfigurations with
 +         resetLockoutRequiresHardwareAuthToken=false. FingerprintProvider then takes the "Adding HIDL
 +         configs" branch and wraps every sensor in a HidlToAidlSensorAdapter, whose isHardwareDetected
-+         calls IBiometricsFingerprint.getService() -- a HIDL HAL this device has not shipped since it
++         calls IBiometricsFingerprint.getService()  -  a HIDL HAL this device has not shipped since it
 +         moved to android.hardware.biometrics.fingerprint-service.lineage (AIDL, declared in VINTF).
 +         The lookup fails, canAuthenticate returns BIOMETRIC_ERROR_HW_UNAVAILABLE, and Settings hides
 +         fingerprint enrolment entirely with no error the user can see.
