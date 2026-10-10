@@ -1317,6 +1317,35 @@ Making it direct-boot-aware is not obviously safe: it keeps SIP credentials and 
 in CE storage, so an early start would read an empty profile. The cheaper fix is to make
 registration retry on `ACTION_USER_UNLOCKED` rather than fire once at process start. See GOTCHAS 44.
 
+## Do not derive CA_TARGET from the stub's class initializer (2026-10-10)
+
+Attempted and reverted. `com.lge.os.Build.CA_TARGET` reports `VZW` because this is a Verizon V20,
+which is wrong for any other SIM, so the constant was replaced with a call into a helper that
+derived the operator from `gsm.operator.numeric` and `gsm.sim.operator.numeric`.
+
+The result is worse than a wrong carrier name. `OperatorInfo.TARGET_OPERATOR` stops being `VZW`,
+LG's stack selects `ApnImsGlobal` instead of `ApnImsVZW`, and the global path never initialises on
+this device:
+
+    ImsServiceManager   0 (was 3)      SIMStateAgent        0 (was 30)
+    TelephonyCompat     0 (was 9)      ISIM_STATE_CHANGED   0 (was 2)
+    ApnImsGlobal      308 (was 0)      ims pdn              never connects
+
+`Ims4` starts, registers `com.lge.ims.phone`, and then logs nothing for ten minutes while the
+native side reports `CATEGORY_NETWORK :: No listeners`. The gate visible from outside is
+`esm not received / aos enabler not ready` with `volte unavailable`, and **no registration is ever
+attempted**, which is a different failure from the intermittent 421 below.
+
+Proven by swapping only the apk on a running device, and by diffing the two builds: of 2600 classes
+exactly two differ, `Build$CA_TARGET` and the added helper. Reverting the stub and rebuilding
+reproduces the known-good dex with **zero** differing classes, so `build-ims4.sh` is reproducible
+and the change itself was the regression.
+
+If carrier-agnostic profile selection is wanted, do it through
+`persist.lg.ims.pref_operator`, which `OperatorInfo` already reads as `PREFERENCE_OPERATOR` and
+which is the documented override. Setting a property from a boot script keeps class initialization
+out of it. Do not call into app code from that stub's `<clinit>`.
+
 ## OPEN (2026-10-10): registration intermittently goes out with no security headers
 
 Not solved. An earlier revision of this section claimed it was, and claimed the cause was that
