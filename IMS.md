@@ -1296,8 +1296,9 @@ boot. That is how every build before this one was tested. Once a PIN exists:
 - `Ims4` then starts cold and registers once against a modem and a telephony stack that have
   already been up for minutes.
 
-LG's stack registers on startup and does not meaningfully retry, so "registers then drops" and
-"worked before I set a PIN" are the same bug wearing different clothes. Check it with:
+LG's stack registers on startup and does not meaningfully retry, so a stack that registers then
+drops, and one that worked before a PIN was set, are the same bug wearing different clothes. Check
+it with:
 
     dumpsys user | grep State     # RUNNING_LOCKED vs RUNNING_UNLOCKED
     ps -A | grep lge.ims          # zero processes while RUNNING_LOCKED
