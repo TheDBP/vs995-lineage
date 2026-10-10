@@ -28,6 +28,22 @@ claimed.
 
 ### What does not work
 
+- **Encryption, and it is not coming.** This phone runs `/data` unencrypted, which is deliberate
+  upstream, not an oversight in this tree. FBE does not work on *any* LGE msm8996 or msm8998 device
+  because LG's custom KeyMaster trustlet is incompatible with the AOSP file-based encryption path,
+  and Android 13 removed FDE, so there is no fallback. The LineageOS Directors granted these devices
+  an explicit exemption from the charter's encryption requirement.
+
+  Everything on the Android side is still in place and will mislead you into thinking it is a
+  missing config line: the kernel has `CONFIG_EXT4_ENCRYPTION=y` and `CONFIG_PFK=y` (Qualcomm ICE),
+  Android 17's libfscrypt still supports the `ice` mode and v1 policies, and
+  `ro.product.first_api_level=24` selects exactly the legacy v1 path AOSP still carries. The blocker
+  is inside a proprietary TEE blob, so adding `fileencryption=` to the fstab cannot fix it.
+
+  One consequence worth keeping: because the device stays unencrypted there is no
+  credential-encrypted storage, so making an app direct-boot-aware does not risk it reading an empty
+  profile. That is why the `Ims4` direct-boot work is cheap here and would not be on a normal phone.
+
 - **SMS over IMS.** Texting works over the circuit-switched path, which is what the phone uses
   today; only the IMS path is unfinished (the modem refuses the QMI WMS transport registration).
 - **Wi-Fi calling and video calling.** Not offered — VT needs a media path that does not work here,
