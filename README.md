@@ -186,19 +186,33 @@ one genuine AOSP bug fix (the compat `ImsService` path crashes the phone process
 
 ### Biometrics and lights
 
-Two overlay values this device tree was carrying that described hardware it does not have, or denied
-hardware it does.
+**Fingerprint.** The sensor's libhardware module reports API version 2.0, and only one
+implementation accepts that: `android.hardware.biometrics.fingerprint@2.0-service`, which despite
+the name serves the still-current HIDL `@2.1` interface. The `2.0` in it means the legacy module
+version it opens. Pointing the AIDL service at this blob instead looked reasonable and is not
+survivable, because the two legacy APIs disagree on `enumerate`: 2.0 takes
+`(dev, results, max_size)` and 2.1 takes `(dev)` and answers through the notify callback, which is
+why the 2.0 service casts to its own `enumerate_2_0`. The AIDL service rejects the version,
+`openHal()` returns null, and `createSession` hands that null straight to the session constructor,
+so the HAL segfaults at `mDevice->set_active_group` the moment Settings asks to enrol.
 
-`config_biometric_sensors` was still declared, which is a HIDL-era thing: a non-empty array makes
-`AuthService` route biometrics through `HidlToAidlSensorAdapter` and call
-`IBiometricsFingerprint.getService()`. This device is on the generic Lineage AIDL fingerprint HAL, so
-there is no such service, every operation returned `BIOMETRIC_ERROR_HW_UNAVAILABLE`, and Settings
-offered no fingerprint option at all. Removing the array is the fix, confirmed on hardware.
+`config_biometric_sensors` belongs here and must stay: with a HIDL HAL it is how `AuthService`
+learns the sensor exists. FCM target level 7 permits `format="hidl"` fingerprint `2.1-3`; **level 8
+drops HIDL fingerprint entirely**, so raising the target level later means writing a real AIDL shim
+that handles the `enumerate` difference.
 
-`config_deviceLightCapabilities` was overridden to `0` against a `lineage-sdk` default of `8`, which
-makes `LightsCapabilities.supports()` false for every bit and gates off each LED control. Set to
-`11`. **This one is config-only and not yet confirmed against the hardware**; if the panel has no
-RGB LED it should drop back to `8`.
+Verified on hardware: enrolment and authentication both work, `lshal` shows
+`IBiometricsFingerprint/default` served with a client, and `HAL deaths since last reboot: 0`.
+
+**Notification LED.** The panel does have an RGB notification LED: `/sys/class/leds/{red,green,blue}`
+each report `max_brightness` 255 and writing to `brightness` lights them, so
+`config_deviceLightCapabilities` is correctly `11` rather than the `0` this tree used to carry.
+
+That alone is not enough. The LEDs sit under pmi8994 `leds@d000`, which the device tree never
+labelled, so they stayed `u:object_r:sysfs:s0` and `hal_light` was denied reading `max_brightness`
+and `trigger`. It enumerated no lights at all, which looks like nothing from the UI side: the
+settings appear because the capabilities advertise them, and nothing ever lights up. `hal_light`
+already holds `rw_file_perms` on `sysfs_leds`, so one `genfs_contexts` line is the whole fix.
 
 ### Display and feel
 
