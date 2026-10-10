@@ -73,6 +73,18 @@ the ROM install rewrites boot, so it has to be after, not before.
   notch too small, in build 20): 548 dp wide instead of 411. Not 320: at 720 dp the phone crosses `sw600dp` and becomes a tablet (taskbar, corner nav
   buttons), tried live with `wm density 320`. The font scale is `def_device_font_scale`, applied
   by SettingsProvider on fresh data only — a dirty flash keeps the old `font_scale`.
+- **`OEM_DCFAILCAUSE_1(0x1001)`: the modem refuses every data call.** `SETUP_DATA_CALL` returns
+  that cause and the framework retries on a widening backoff (5 s, then 10 minutes, then 20), so
+  `rmnet_data0` holds an IP while `Active default network` stays `none`. The UI reports the
+  connection as up because the PDN link exists; connectivity disagrees because the call never
+  completed. During setup this is worse than cosmetic: `NetworkSetupActivity` blocks its Next
+  button on a validated default network, so setup cannot proceed.
+
+  **Remedy: cycle airplane mode**, which forces a fresh attach and brings data straight up.
+  `svc data disable/enable` does NOT clear it and can provoke it. Seen three times in one day,
+  always on USB power. Note the setup screen only re-evaluates its Next button on entry, so after
+  data recovers, step back one page and forward again.
+
 - **mobile data on a DirtySanta phone** (kernel patch 0006, verified build 19): the US996
   engineering bootloader leaves the last word of SMEM VENDOR1 at `0xffffffff`; the LG modem reads
   that as a factory cable and refuses every AP data call (`[LG_DATA] AP data call block under
