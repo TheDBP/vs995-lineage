@@ -4,15 +4,47 @@ Date: Mon, 5 Oct 2026 08:36:51 -0400
 Subject: [PATCH] msm8996-common: Flash A runtime fixes -- privapp allowlist,
  com.lge.os.Build stub, getSlotId redirect, permissive radio (bringup)
 
+The com.lge.os.Build.CA_TARGET stub is what LG's stack uses to choose an IMS
+profile: OperatorInfo reads OPERATOR and COUNTRY out of it and everything
+downstream follows. Stock burns one value per SKU, which is right for a phone
+that cannot change carrier core and wrong for a ROM that takes any SIM.
+
+Hardcoding this device's "VZW" fails in a way that is painful to trace: the
+VZW profile sends no Security-Client header, so a P-CSCF that wants RFC 3329
+answers 421 Extension Required, Require: sec-agree, LG's stack does not retry,
+and the phone has no VoLTE with nothing in the log saying 'wrong carrier'.
+Calls fail LOCAL and SMS fails the same way.
+
+So the stub derives both fields at class load, through
+com.lge.ims.compat.CarrierTarget, from the properties the RIL maintains. It is
+keyed on the serving network rather than the SIM, because an MVNO carries its
+own MNC while riding the host's IMS core: Mint reads 310240 on the SIM and
+310260 on the network, and T-Mobile's P-CSCF is the one that answers. That
+covers every reseller on a mapped core without a row each. Roaming inverts it,
+since IMS still belongs to the home operator, so the SIM wins there.
+
+Mapped to the profiles the stack implements (VZW, TMO, ATT, SPR, MPCS) and
+falling back to OPEN, LG's open market target, which ProviderDBUpdateHelper
+compares TARGET_OPERATOR against, so it is a real value rather than a guess.
+No Context is involved: these fields are read from a static initializer before
+any Application exists, so properties are the only source available. Nothing
+throws, because a throw there is ExceptionInInitializerError in a persistent
+process.
+
+persist.lg.ims.pref_operator still overrides all of it through
+OperatorInfo.PREFERENCE_OPERATOR, which stays the escape hatch for a carrier
+this mapping gets wrong.
 ---
- ims/build-ims4.sh                             | 10 +++++
- .../com/lge/os/Build$CA_TARGET.smali          | 20 ++++++++++
- ims/extra-smali/com/lge/os/Build.smali        |  8 ++++
- ims/ims.mk                                    |  5 +++
- ims/method-redirects.txt                      |  2 +
- ims/privapp-permissions-com.lge.ims.xml       | 37 +++++++++++++++++++
- sepolicy/private/ims.te                       |  5 +++
- 7 files changed, 87 insertions(+)
+ ims/build-ims4.sh                             |  10 ++
+ .../com/lge/ims/compat/CarrierTarget.java     | 165 ++++++++++++++++++
+ .../com/lge/os/Build$CA_TARGET.smali          |  24 +++
+ ims/extra-smali/com/lge/os/Build.smali        |   8 +
+ ims/ims.mk                                    |   5 +
+ ims/method-redirects.txt                      |   2 +
+ ims/privapp-permissions-com.lge.ims.xml       |  37 ++++
+ sepolicy/private/ims.te                       |   5 +
+ 8 files changed, 256 insertions(+)
+ create mode 100644 ims/compat-java/com/lge/ims/compat/CarrierTarget.java
  create mode 100644 ims/extra-smali/com/lge/os/Build$CA_TARGET.smali
  create mode 100644 ims/extra-smali/com/lge/os/Build.smali
  create mode 100644 ims/method-redirects.txt
@@ -47,24 +79,199 @@ index e8edd04c..19c1fa69 100755
  java -jar "$SM" assemble "$T/merged" -o "$T/classes.dex"
  cp "$APK" "$OUT"
  (cd "$T" && zip -q "$OUT" classes.dex && zip -q -r "$OUT" lib)
+diff --git a/ims/compat-java/com/lge/ims/compat/CarrierTarget.java b/ims/compat-java/com/lge/ims/compat/CarrierTarget.java
+new file mode 100644
+index 00000000..9d20733c
+--- /dev/null
++++ b/ims/compat-java/com/lge/ims/compat/CarrierTarget.java
+@@ -0,0 +1,165 @@
++package com.lge.ims.compat;
++
++import android.util.Log;
++
++import java.lang.reflect.Method;
++import java.util.Locale;
++
++/**
++ * Which carrier's IMS profile LG's stack should use.
++ *
++ * <p>Stock burns this into {@code com.lge.os.Build.CA_TARGET} at build time, one value per SKU: a
++ * Verizon V20 ships OPERATOR="VZW" and nothing ever reconsiders it, because a stock phone cannot
++ * change carrier core. An aftermarket ROM takes whatever SIM the owner puts in, so a burned in
++ * value is wrong for everyone except the original carrier.
++ *
++ * <p>It is wrong in a way that is painful to diagnose. {@code OperatorInfo.TARGET_OPERATOR} reads
++ * these fields and selects the IMS profile; the VZW profile sends no {@code Security-Client}
++ * header, so against a P-CSCF that requires RFC 3329 the REGISTER is answered
++ * {@code 421 Extension Required, Require: sec-agree} and the phone quietly has no VoLTE. Nothing
++ * logs "wrong carrier".
++ *
++ * <p>So derive it from the properties the RIL maintains rather than hardcoding it. No
++ * {@link android.content.Context} is involved on purpose: these fields are read from a static
++ * initializer, before any Application object exists.
++ *
++ * <p>{@code persist.lg.ims.pref_operator} still overrides everything here, via
++ * {@code OperatorInfo.PREFERENCE_OPERATOR}. That is the escape hatch for a carrier this mapping
++ * gets wrong, and it is the documented way to test a profile by hand.
++ */
++public final class CarrierTarget {
++    private static final String TAG = "CarrierTarget";
++
++    /** LG's open market target. Real: ProviderDBUpdateHelper compares TARGET_OPERATOR against it. */
++    private static final String FALLBACK_OPERATOR = "OPEN";
++    private static final String FALLBACK_COUNTRY = "US";
++
++    private CarrierTarget() {}
++
++    /**
++     * The LG operator code for the network whose IMS core we will register against.
++     *
++     * <p>Prefers the <em>serving</em> network over the SIM. An MVNO SIM carries its own MNC while
++     * riding the host's IMS core: Mint reports 310240 on the SIM and 310260 (T-Mobile) as the
++     * serving network, and it is T-Mobile's P-CSCF that answers. Keying off the serving network
++     * therefore covers every MVNO on a mapped core without a row per reseller.
++     *
++     * <p>Roaming inverts it. IMS still belongs to the home operator when you are roaming, so the
++     * SIM is the right answer there and the visited network is not.
++     */
++    public static String operator() {
++        try {
++            String sim = first(prop("gsm.sim.operator.numeric"));
++            String serving = first(prop("gsm.operator.numeric"));
++            boolean roaming = "true".equalsIgnoreCase(prop("gsm.operator.isroaming"));
++
++            String preferred = roaming ? sim : serving;
++            String secondary = roaming ? serving : sim;
++
++            String op = profileFor(preferred);
++            if (op == null) {
++                op = profileFor(secondary);
++            }
++            if (op == null) {
++                Log.i(TAG, "no profile for sim=" + sim + " serving=" + serving
++                        + " roaming=" + roaming + ", using " + FALLBACK_OPERATOR);
++                return FALLBACK_OPERATOR;
++            }
++            Log.i(TAG, "operator=" + op + " (sim=" + sim + " serving=" + serving
++                    + " roaming=" + roaming + ")");
++            return op;
++        } catch (Throwable t) {
++            // A throw here becomes ExceptionInInitializerError in CA_TARGET's clinit, which kills
++            // a persistent process on a loop. Degrade instead.
++            Log.e(TAG, "operator() failed, using " + FALLBACK_OPERATOR, t);
++            return FALLBACK_OPERATOR;
++        }
++    }
++
++    /** The SIM's country, which is the home country even while roaming. */
++    public static String country() {
++        try {
++            String iso = prop("gsm.sim.operator.iso-country");
++            if (isEmpty(iso)) {
++                iso = prop("ro.build.default_country");
++            }
++            if (isEmpty(iso)) {
++                return FALLBACK_COUNTRY;
++            }
++            return iso.trim().toUpperCase(Locale.US);
++        } catch (Throwable t) {
++            Log.e(TAG, "country() failed, using " + FALLBACK_COUNTRY, t);
++            return FALLBACK_COUNTRY;
++        }
++    }
++
++    /**
++     * MCC+MNC to the profiles LG's stack actually implements, which are VZW, TMO, ATT, SPR and
++     * MPCS. Mapped by network core, not by reseller: a resold SIM reaches its host through the
++     * serving network above.
++     *
++     * <p>Returns null for anything unmapped so the caller can try the other candidate.
++     */
++    private static String profileFor(String numeric) {
++        if (numeric == null || numeric.length() < 5) {
++            return null;
++        }
++        switch (numeric) {
++            // T-Mobile US
++            case "310026": case "310160": case "310200": case "310210":
++            case "310220": case "310230": case "310240": case "310250":
++            case "310260": case "310270": case "310300": case "310310":
++            case "310330": case "310490": case "310580": case "310800":
++            case "311882": case "312250":
++                return "TMO";
++            // Metro, which has a profile of its own but reports T-Mobile's MNC on newer SIMs
++            case "311660":
++                return "MPCS";
++            // Verizon
++            case "310004": case "310005": case "310012": case "310013":
++            case "310590": case "310890": case "310910": case "311480":
++            case "311270": case "311271": case "311272": case "311273":
++            case "311274": case "311275": case "311276": case "311277":
++            case "311278": case "311279": case "311280": case "311281":
++            case "311282": case "311283": case "311284": case "311285":
++            case "311286": case "311287": case "311288": case "311289":
++                return "VZW";
++            // AT&T
++            case "310070": case "310150": case "310170": case "310280":
++            case "310380": case "310410": case "310560": case "310680":
++            case "311180": case "313100":
++                return "ATT";
++            // Sprint
++            case "310120": case "311490": case "311870": case "312530":
++            case "316010":
++                return "SPR";
++            default:
++                return null;
++        }
++    }
++
++    /** Multi SIM builds publish a comma separated list; slot 0 is the only slot this device has. */
++    private static String first(String csv) {
++        if (isEmpty(csv)) {
++            return null;
++        }
++        int comma = csv.indexOf(',');
++        String v = (comma < 0 ? csv : csv.substring(0, comma)).trim();
++        return isEmpty(v) ? null : v;
++    }
++
++    private static boolean isEmpty(String s) {
++        return s == null || s.trim().isEmpty();
++    }
++
++    /** android.os.SystemProperties is @hide with no stub in the system android.jar, so reflection. */
++    private static String prop(String key) {
++        try {
++            Method get = Class.forName("android.os.SystemProperties")
++                    .getMethod("get", String.class, String.class);
++            return (String) get.invoke(null, key, "");
++        } catch (Throwable t) {
++            return "";
++        }
++    }
++}
 diff --git a/ims/extra-smali/com/lge/os/Build$CA_TARGET.smali b/ims/extra-smali/com/lge/os/Build$CA_TARGET.smali
 new file mode 100644
-index 00000000..72f7e9ad
+index 00000000..8dcca4c5
 --- /dev/null
 +++ b/ims/extra-smali/com/lge/os/Build$CA_TARGET.smali
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,24 @@
 +.class public Lcom/lge/os/Build$CA_TARGET;
 +.super Ljava/lang/Object;
 +.source "Build.java"
 +# LG framework stub (com.lge.os.Build.CA_TARGET) -- carrier/region target the stock boot classpath
-+# provided. Values for vs995 = Verizon V20. OperatorInfo reads only OPERATOR + COUNTRY.
++# provided. Stock burns one value per SKU; this ROM takes any SIM, so both fields are derived at
++# class load from the RIL's own properties by com.lge.ims.compat.CarrierTarget. OperatorInfo reads
++# only OPERATOR + COUNTRY, and persist.lg.ims.pref_operator still overrides both downstream.
 +.field public static OPERATOR:Ljava/lang/String;
 +.field public static COUNTRY:Ljava/lang/String;
 +.method static constructor <clinit>()V
 +    .registers 1
-+    const-string v0, "VZW"
++    invoke-static {}, Lcom/lge/ims/compat/CarrierTarget;->operator()Ljava/lang/String;
++    move-result-object v0
 +    sput-object v0, Lcom/lge/os/Build$CA_TARGET;->OPERATOR:Ljava/lang/String;
-+    const-string v0, "US"
++    invoke-static {}, Lcom/lge/ims/compat/CarrierTarget;->country()Ljava/lang/String;
++    move-result-object v0
 +    sput-object v0, Lcom/lge/os/Build$CA_TARGET;->COUNTRY:Ljava/lang/String;
 +    return-void
 +.end method

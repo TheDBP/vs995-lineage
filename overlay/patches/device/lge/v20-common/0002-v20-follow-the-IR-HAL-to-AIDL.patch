@@ -27,10 +27,10 @@ index 45c9618..d4fa59f 100644
 -    </hal>
  </manifest>
 diff --git a/v20.mk b/v20.mk
-index 97025d9..d9a10af 100644
+index 8ce32c0..562287d 100644
 --- a/v20.mk
 +++ b/v20.mk
-@@ -74,7 +74,7 @@ PRODUCT_VENDOR_PROPERTIES += \
+@@ -69,7 +69,7 @@ PRODUCT_PACKAGES += \
  
  # IR
  PRODUCT_PACKAGES += \
