@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheDBP <TheDBP@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 07:33:51 -0400
+Subject: [PATCH] msm8996-common: label the RGB notification LED so the lights
+ HAL can see it
+
+/sys/class/leds/{red,green,blue} live under pmi8994 leds@d000, a sibling of
+the haptics node that was already labelled. Everything else was in place and
+only the label was missing, so the generic Lineage lights HAL was denied
+reading max_brightness and trigger:
+
+  avc: denied { read } name="max_brightness" scontext=u:r:hal_light_default:s0
+       tcontext=u:object_r:sysfs:s0 tclass=file
+
+It therefore enumerated no lights, which is invisible from the UI side: the
+LED settings appear because config_deviceLightCapabilities advertises them,
+and nothing ever lights up. hal_light already holds rw_file_perms on
+sysfs_leds in system sepolicy, so labelling the directory is the whole fix.
+
+Hardware confirmed present and working before writing this: max_brightness
+is 255 on red, green and blue, and writing brightness directly lights them.
+---
+ sepolicy/vendor/genfs_contexts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/sepolicy/vendor/genfs_contexts b/sepolicy/vendor/genfs_contexts
+index e45ec891..6adb7e72 100644
+--- a/sepolicy/vendor/genfs_contexts
++++ b/sepolicy/vendor/genfs_contexts
+@@ -43,5 +43,11 @@ genfscon sysfs /devices/soc/75b5000.i2c/i2c-7/7-001d/power_supply   u:object_r:s
+ # LEDs
+ genfscon sysfs /devices/soc/400f000.qcom,spmi/spmi-0/spmi0-03/400f000.qcom,spmi:qcom,pmi8994@3:qcom,haptics@c000/leds/vibrator   u:object_r:sysfs_leds:s0
+ genfscon sysfs /devices/soc/74a4900.sdhci/leds                                                                                    u:object_r:sysfs_leds:s0
++# The RGB notification LED, a sibling of the haptics node above on the same pmi8994. Without this
++# the nodes stay u:object_r:sysfs:s0 and hal_light is denied reading max_brightness and trigger, so
++# it enumerates no lights at all: the settings exist (config_deviceLightCapabilities) and nothing
++# ever lights up. hal_light already has rw_file_perms on sysfs_leds in system sepolicy, so labelling
++# is the whole fix.
++genfscon sysfs /devices/soc/400f000.qcom,spmi/spmi-0/spmi0-03/400f000.qcom,spmi:qcom,pmi8994@3:qcom,leds@d000/leds   u:object_r:sysfs_leds:s0
+ 
+ # ProcFS
