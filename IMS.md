@@ -151,7 +151,7 @@ max msg 0x411). Wire format from the IDL tables
 The live modem publishes **0x2bf instance 0x0102** on node 0, so the modem
 side exists in the firmware a Lineage build runs on. It is a plain QMI client
 and does not need LG's RIL (unlike `oem_rapi_*_ims_setting` via
-`libril-qcril-hook-oem.so`; our tree runs the tissot qcril).
+`libril-qcril-hook-oem.so`; this tree runs the tissot qcril).
 
 **Who uses it.** Only `/system/lib/libimsmmpf.so` (LG IMS Media Platform
 Framework, unstripped C++). `libimsvtjni.so` links the qcci lib but imports
@@ -475,7 +475,7 @@ A17 telephony (ImsPhone, ImsResolver)
   -> android.telephony.ims.*                              (modern ImsService API)
   -> ImsServiceControllerCompat + MmTelFeatureCompatAdapter  (AOSP's own pre-P compat layer)
   -> android.telephony.ims.compat.*
-  -> ImsBridge (our android_app)                          <- the bridge
+  -> ImsBridge (the android_app here)                          <- the bridge
   -> com.android.ims.internal.IImsService (legacy 7.0 Binder, renamed)
   -> Ims4 (LG app, registers ServiceManager "ims")
   -> libims/libimsmmpf (LG SIP stack) -> LG qcril QMI -> modem
@@ -662,7 +662,7 @@ Fixes it took, in order hit:
   `lge.intent.action.LTE_NETWORK_SUPPORTED_INFO` broadcast (int extras
   `VoPS_Support`/`EPDN_Support`), which `DCNetWatcher.handleVoLTEEPSNetworkSupport`
   compares as `LGDataPhoneConstants$VolteAndEPDNSupport.fromInt(v) == VOLTE_SUPPORT`
-  -- our verify stub's `fromInt` returned a fresh object, so it could never match.
+  -- the verify stub's `fromInt` returned a fresh object, so it could never match.
   Fixes: faithful enum (NONE 0, VOLTE_NOT_SUPPORT 1, VOLTE_SUPPORT 2,
   EPDN_NOT_SUPPORT 3, EPDN_SUPPORT 4) + `ImsPhoneCompat.startVopsMonitor()`
   (started from `setListener`) sends that broadcast sticky (DCNetWatcher registers
@@ -740,7 +740,7 @@ Open, next:
   22 KB; that lib needs libqmiservices, libqmi_cci, libcutils, `wms_get_service_
   object_internal_v01`) so the modem hands MO SMS to the IMS stack and takes MT
   SMS back. Closure is small and all-C: ship both as vendor prebuilts
-  (`vendor/bin` + `vendor/lib64`, our vendor already has the Oreo libqmi*), an
+  (`vendor/bin` + `vendor/lib64`, this vendor set already has the Oreo libqmi*), an
   init rc service, and a sepolicy domain (abstract unix dgram socket to radio
   app + qmux). Stock dump: `.scratch/kdz/vs995/parts/system.image`
   (`debugfs -R 'dump /bin/imswmsproxy ...'`, `/vendor/lib64/libqmi_wms_client_
@@ -909,7 +909,7 @@ IPC_RTR: msm_ipc_router_sendmsg: Send_to failure -1
 ```
 
 The MSM IPC router gates every QMI service by GID from `sec_config`, and a service with **no rule**
-is reachable only by root. `configs/permissions/sec_config` (ours, installed by `msm8996.mk` and fed
+is reachable only by root. `configs/permissions/sec_config` (local, installed by `msm8996.mk` and fed
 to `irsc_util` by `rootdir/etc/init.qcom.rc`) granted services 1-511, 704 and 4097 -- and omitted
 **703**, the `lge_ims` service LG's own IMS stack needs. com.lge.ims runs as radio, so every
 `0x060C` was denied.
@@ -942,7 +942,7 @@ Verified on the Flash B build plus the pushed bridge revisions:
   ~24 s after the framework opens the session, so the open()-time probe always ran too early and the
   framework kept `Voice: false` forever; take `isConnected(NORMAL, 0)` (isRegistered) as the voice
   ground truth, because `isConnected(NORMAL, VOICE)` additionally demands LG UC-layer flags fed by
-  provisioning Ims4 refuses to let us write (`setProvisionedValue ... refused, rc=1`), so it answers
+  provisioning Ims4 refuses to accept a write (`setProvisionedValue ... refused, rc=1`), so it answers
   false while voice demonstrably works; report `RIL_RADIO_TECHNOLOGY_LTE` when Ims4 reports no tech
   (it only ever calls `registrationConnected()`), or the dial gate fails; acknowledge
   `setFeatureValue` ourselves, or each capability change blocks the framework's 2 s latch and
@@ -1046,7 +1046,7 @@ Verified on the Flash B build plus the pushed bridge revisions:
 
   **Both earlier leads are wrong, and so was a later one.** It is not the daemon running as root
   instead of `group radio`: as root it gets all the way to the QMI client call, and there are no
-  IPC-router denials, exactly as the original note said. It is not our RIL "owning" the WMS
+  IPC-router denials, exactly as the original note said. It is not the device RIL "owning" the WMS
   transport either -- nothing is refusing it, there is nothing there to refuse. (The sec_config rule
   `5:4294967295:1001` granting WMS to radio only is real but irrelevant here; it would matter if the
   transport existed.)
@@ -1110,7 +1110,7 @@ Verified on the Flash B build plus the pushed bridge revisions:
   Closing that needs a **modern** (non-compat) ImsService: implement `MmTelFeature` directly with
   `getSmsImplementation()`, reimplementing what `MmTelFeatureCompatAdapter` does for calls (which is
   readable, ~500 lines) plus the SMS surface, and a way for Ims4 to hand MT SMS up -- which on stock
-  is LG framework code we do not have. That is a different project from this bridge, not a last
+  is LG framework code that is not available here. That is a different project from this bridge, not a last
   step, and it is why SMS is parked rather than nearly done.
 
   The reusable half of this is in the forge, so the next device does not repeat it:
@@ -1207,8 +1207,8 @@ wants one, does not restart from zero -- they are not a plan of record.
 
 Google Messages does RCS over **Jibe Cloud** on plain data, not through the carrier IMS stack, and
 T-Mobile (so Mint) migrated to Jibe -- so on this SIM Chat features should work with GApps and the
-mobile data we already have, with no IMS involvement. The two ways an app *could* use a device IMS
-stack for RCS are both closed to us: UCE capability exchange needs an `RcsFeature` bridge that does
+mobile data already present, with no IMS involvement. The two ways an app *could* use a device IMS
+stack for RCS are both closed off: UCE capability exchange needs an `RcsFeature` bridge that does
 not exist, and single registration needs `SipTransportImplBase` (Android 12), which a 2016 stack
 predates by six years. Test order: get SMS working (Jibe verifies the number by SMS), build
 `PRESET=full`, sign in, check Chat features. That experiment decides it.
@@ -1219,7 +1219,7 @@ predates by six years. Test order: get SMS working (Jibe verifies the number by 
   RCS placeholder that upstream never implemented.
 - **There is no `RcsFeatureCompatAdapter` in AOSP.** MMTel, registration and config each have one;
   RCS does not. The MMTel bridge worked because a finished adapter layer existed to plug into. For
-  RCS there is nothing to plug into, so the whole adapter would be ours.
+  RCS there is nothing to plug into, so the whole adapter would have to be written here.
 - **Ims4 does not implement AOSP's UCE API at all** -- zero references to `IUceService` or
   `UceServiceBase`. The `com.android.ims.internal.uce.*` classes exist in LG's framework but Ims4
   never touches them, so "un-stub UCE and wire config_ims_rcs_package" (the earlier plan) cannot
@@ -1228,7 +1228,7 @@ predates by six years. Test order: get SMS working (Jibe verifies the number by 
   `IEnrichedCallService`, `IInCallSession`/`IOutCallSession`.
 
 If it is ever attempted: skip the compat path and write a **modern** `RcsFeature` ImsService in a
-separate app (`config_ims_rcs_package` may differ from the mmtel package) -- we would be writing the
+separate app (`config_ims_rcs_package` may differ from the mmtel package) -- that means writing the
 adapter either way, so write it against the supported API. Then regenerate LG's RCS AIDL with
 gen-legacy-aidl.py (verify with aidl-tx-diff.py), un-stub the RCS parcelables via build-ims4.sh step
 3.5, and expect the same capability lie as voice (Ims4's UC flags are provisioning-gated and
@@ -1389,7 +1389,7 @@ Two confounds were identified before drawing any conclusion:
 
 1. **Upstream moved.** In a single day `frameworks/base` gained 6 commits, `Settings` 3 and
    `vendor/lineage` 4. Builds here were never reproducible, so "it worked last week" was not
-   evidence about our patch series. `bootstrap.sh` now snapshots the manifest after every sync and
+   evidence about the patch series. `bootstrap.sh` now snapshots the manifest after every sync and
    `PIN_MANIFEST=` replays it; see GOTCHAS 47.
 2. **A PIN now exists**, which opened the direct-boot window described above. That changed IMS
    startup ordering independently of any build.

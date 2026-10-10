@@ -9,7 +9,7 @@
 #
 # WHY AN IMAGE AND NOT THE KDZ: nothing here reads LG's container format. Extract the KDZ once with
 # third-party kdztools (unkdz, then undz) and keep the `system` partition -- that is the one manual
-# step, and it needs a tool we cannot vendor.
+# step, and it needs a tool that cannot be vendored.
 #
 # Everything this produces is derived from proprietary firmware: it is written into the build tree
 # and committed nowhere. That is also why it cannot simply ship -- see README.md.

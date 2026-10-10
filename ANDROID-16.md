@@ -10,10 +10,10 @@ android_device_lge_msm8996-common   newest branch: lineage-22.2
 ```
 
 LineageOS stopped at Android 15 for the V20 family. So unlike bonito there is no 23.x tree to
-evaluate -- and also no stale one to be misled by. An A16 port means carrying our 22.2 tree forward
+evaluate -- and also no stale one to be misled by. An A16 port means carrying the 22.2 tree forward
 ourselves, the same shape as the ether 18.1 -> 20.0 work.
 
-## The upside: our base is current and healthy
+## The upside: the base is current and healthy
 
 | tree | last upstream commit |
 |---|---|

@@ -171,7 +171,7 @@ build with `EXTRA_OPTIONS=`. This table is generated from the forge by
 
 81 patches across 17 upstream projects, applied at build time from `overlay/patches/`. Nothing here
 is a fork: each is a single commit against the upstream tree, replayed on every build, so upstream
-stays upstream and what we changed stays legible. One patch per thing it enables.
+stays upstream and every change stays legible. One patch per thing it enables.
 
 ### Making a 22.2-era device tree boot on 24.0
 
