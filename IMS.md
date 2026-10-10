@@ -1316,7 +1316,52 @@ Making it direct-boot-aware is not obviously safe: it keeps SIP credentials and 
 in CE storage, so an early start would read an empty profile. The cheaper fix is to make
 registration retry on `ACTION_USER_UNLOCKED` rather than fire once at process start. See GOTCHAS 44.
 
-## VoLTE regression and the A/B (2026-10-09, OPEN)
+## SOLVED (2026-10-10): re-registration after a PDN drop omits Security-Client
+
+**The stack only establishes IPsec on its first registration after a cold boot. Any later
+re-registration goes out without `Security-Client`, the P-CSCF answers `421 Extension Required,
+Require: sec-agree`, and the stack parks at `STATE_OFFLINE` and never recovers.** Only a reboot
+brings VoLTE back.
+
+Reproducible on demand: toggle airplane mode, or wait for the IMS PDN to drop on its own.
+
+Measured, with the chain complete:
+
+    ipsecstarter   running
+    ipsecclient    NOT running
+    /proc/net/unix @/tmp/ims/socket/ipsec_controller   present (the starter)
+                   @/tmp/ims/socket/ipsec_user         ABSENT  (libims never re-bound it)
+    Security-Client lines in the whole boot: 1          (the cold-boot registration only)
+    SIP/2.0 421 Extension Required                      (every re-registration)
+    SetState STATE_REGSTOP -> STATE_REGISTERING -> STATE_OFFLINE
+
+`ipsec_user` is the socket libims binds to ask for IPsec; the starter watches for it and fires
+`ctl.start ipsecclient`. After the registration goes down libims releases it and does not bind it
+again, so the client never starts, no SAs are installed, and the stack falls back to registering in
+the clear. The P-CSCF requires RFC 3329, so it refuses.
+
+A fix has to make the re-registration path re-establish IPsec, or restart `Ims4` when registration
+reaches OFFLINE. Restarting it is only safe by reboot, so the first is the real answer.
+
+### Two earlier explanations for this, both wrong
+
+Recorded because both looked convincing and cost real time.
+
+**"The VZW profile sends no Security-Client."** `CA_TARGET` does hardcode `VZW`, and the VZW profile
+genuinely differs, so a `421` fits. It is not the cause: with `VZW` still hardcoded and
+`persist.lg.ims.pref_operator` unset after a factory wipe, the cold-boot registration sends
+`Security-Client` and gets `200 OK`. The carrier derivation in patch 0028 is still worth having for
+being device and carrier agnostic, but it fixes a different problem, and as of this writing it has
+never shipped (see the note on `Ims4-reworked.apk` being a prebuilt).
+
+**"Stale /data from earlier experiments."** The factory wipe did restore VoLTE, which made this look
+right. It only helped because a wipe forces a cold boot. An airplane-mode toggle on freshly wiped
+data reproduces the failure immediately.
+
+The lesson for this stack: a cold boot is the happy path and proves very little. Test the recovery
+path, because that is the one users hit.
+
+## Superseded: VoLTE regression and the A/B (2026-10-09)
 
 Current state: IMS registers once when `Ims4` starts, then drops. Outgoing calls fail with
 `DisconnectCause: LOCAL`, outgoing SMS fails, and `ImsSmsDispatcher` reports `up=false reg=false
