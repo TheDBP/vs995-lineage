@@ -153,7 +153,7 @@ build with `EXTRA_OPTIONS=`. This table is generated from the forge by
 <!-- options:end -->
 ## Device patches
 
-72 patches across 15 upstream projects, applied at build time from `overlay/patches/`. Nothing here
+81 patches across 17 upstream projects, applied at build time from `overlay/patches/`. Nothing here
 is a fork: each is a single commit against the upstream tree, replayed on every build, so upstream
 stays upstream and what we changed stays legible. One patch per thing it enables.
 
@@ -183,6 +183,22 @@ that presents it to the modern telephony stack, the IPsec helpers its SIP regist
 service rule without which calls have no audio, the sepolicy that lets all of it run enforcing, and
 one genuine AOSP bug fix (the compat `ImsService` path crashes the phone process).
 **[IMS.md](IMS.md)** is the full account.
+
+### Biometrics and lights
+
+Two overlay values this device tree was carrying that described hardware it does not have, or denied
+hardware it does.
+
+`config_biometric_sensors` was still declared, which is a HIDL-era thing: a non-empty array makes
+`AuthService` route biometrics through `HidlToAidlSensorAdapter` and call
+`IBiometricsFingerprint.getService()`. This device is on the generic Lineage AIDL fingerprint HAL, so
+there is no such service, every operation returned `BIOMETRIC_ERROR_HW_UNAVAILABLE`, and Settings
+offered no fingerprint option at all. Removing the array is the fix, confirmed on hardware.
+
+`config_deviceLightCapabilities` was overridden to `0` against a `lineage-sdk` default of `8`, which
+makes `LightsCapabilities.supports()` false for every bit and gates off each LED control. Set to
+`11`. **This one is config-only and not yet confirmed against the hardware**; if the panel has no
+RGB LED it should drop back to `8`.
 
 ### Display and feel
 

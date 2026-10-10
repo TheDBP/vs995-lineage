@@ -1281,3 +1281,58 @@ What RCS adds on top of the voice stack:
 Order when resuming: voice end-to-end first, then un-stub UCE + LG dialog/device
 parcelables, regenerate the UCE AIDL, add the RcsFeature to the bridge, wire
 config_ims_rcs_package, then provisioning.
+
+## Direct boot: there is no IMS until the user unlocks (2026-10-09)
+
+`Ims4` is `android:persistent="true"` and is **not** `android:directBootAware="true"`. Persistent
+only tells ActivityManager to keep the process alive and restart it; it does not start it early.
+Nothing launches until credential-encrypted storage unlocks, which means until someone types the
+PIN.
+
+On a handset with no screen lock this is invisible, because such a device unlocks itself during
+boot. That is how every build before this one was tested. Once a PIN exists:
+
+- every reboot has a window, as long as the lock screen sits there, with no IMS stack at all, and
+- `Ims4` then starts cold and registers once against a modem and a telephony stack that have
+  already been up for minutes.
+
+LG's stack registers on startup and does not meaningfully retry, so "registers then drops" and
+"worked before I set a PIN" are the same bug wearing different clothes. Check it with:
+
+    dumpsys package com.lge.ims | grep -i directBoot
+    dumpsys activity processes | grep com.lge.ims
+
+Making it direct-boot-aware is not obviously safe: it keeps SIP credentials and registration state
+in CE storage, so an early start would read an empty profile. The cheaper fix is to make
+registration retry on `ACTION_USER_UNLOCKED` rather than fire once at process start. See GOTCHAS 44.
+
+## VoLTE regression and the A/B (2026-10-09, OPEN)
+
+Current state: IMS registers once when `Ims4` starts, then drops. Outgoing calls fail with
+`DisconnectCause: LOCAL`, outgoing SMS fails, and `ImsSmsDispatcher` reports `up=false reg=false
+cap=false`. No VoLTE entry appears in SIM settings. This worked on earlier builds.
+
+Two confounds were identified before drawing any conclusion:
+
+1. **Upstream moved.** In a single day `frameworks/base` gained 6 commits, `Settings` 3 and
+   `vendor/lineage` 4. Builds here were never reproducible, so "it worked last week" was not
+   evidence about our patch series. `bootstrap.sh` now snapshots the manifest after every sync and
+   `PIN_MANIFEST=` replays it; see GOTCHAS 47.
+2. **A PIN now exists**, which opened the direct-boot window described above. That changed IMS
+   startup ordering independently of any build.
+
+A/B baseline is tagged `ab-6a86e24`, the tree before 32fbfa3, 0bc75c4, 07650b8 and 598fca4. Its
+build did **not** pin upstream, so a pass proves those four commits caused it and a failure proves
+nothing. The upstream SHAs it used are in `build_output/manifests/manifest-ab-6a86e24.xml`
+(local only, `build_output/` is gitignored).
+
+Ruled out by experiment: SELinux. `setenforce 0` produced zero denials and an identical failure, so
+patch 0039 is not implicated. Boot-time permissive (`androidboot.selinux=permissive`) is still
+untested and is the only remaining policy question.
+
+## Other open items on the GApps build (2026-10-09)
+
+- **Play Store sign-in loops** in `PreAddAccountChimeraActivity`, hanging on "Checking info".
+- **The satellite section flashes** on the SIM settings page specifically, then disappears.
+- **The clock widget never receives RemoteViews.** It is the AOSP DeskClock provider, the package is
+  not stopped, and launching the app does not help. See GOTCHAS 41.
