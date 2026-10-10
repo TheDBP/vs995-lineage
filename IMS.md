@@ -1316,32 +1316,50 @@ Making it direct-boot-aware is not obviously safe: it keeps SIP credentials and 
 in CE storage, so an early start would read an empty profile. The cheaper fix is to make
 registration retry on `ACTION_USER_UNLOCKED` rather than fire once at process start. See GOTCHAS 44.
 
-## SOLVED (2026-10-10): re-registration after a PDN drop omits Security-Client
+## OPEN (2026-10-10): registration intermittently goes out with no security headers
 
-**The stack only establishes IPsec on its first registration after a cold boot. Any later
-re-registration goes out without `Security-Client`, the P-CSCF answers `421 Extension Required,
-Require: sec-agree`, and the stack parks at `STATE_OFFLINE` and never recovers.** Only a reboot
-brings VoLTE back.
+Not solved. An earlier revision of this section claimed it was, and claimed the cause was that
+IPsec is only established on the first registration after a cold boot. A controlled run refuted
+that: cold boots fail too, roughly one in three.
 
-Reproducible on demand: toggle airplane mode, or wait for the IMS PDN to drop on its own.
+**The signature**, identical every time:
 
-Measured, with the chain complete:
+    [RegParameter.cpp:588] No security related headers
+    [RegParameter.cpp:261] The default port_uc (5060) is selected
+    SIP/2.0 421 Extension Required      (Require: sec-agree)
+    SetState STATE_REGISTERING -> STATE_OFFLINE
 
-    ipsecstarter   running
-    ipsecclient    NOT running
-    /proc/net/unix @/tmp/ims/socket/ipsec_controller   present (the starter)
-                   @/tmp/ims/socket/ipsec_user         ABSENT  (libims never re-bound it)
-    Security-Client lines in the whole boot: 1          (the cold-boot registration only)
-    SIP/2.0 421 Extension Required                      (every re-registration)
-    SetState STATE_REGSTOP -> STATE_REGISTERING -> STATE_OFFLINE
+and the stack never retries, so VoLTE is gone for that boot. When it works instead, the same build
+sends the security agreement, gets `401 Unauthorized` with the AKA challenge, and completes with
+`200 OK`.
 
-`ipsec_user` is the socket libims binds to ask for IPsec; the starter watches for it and fires
-`ctl.start ipsecclient`. After the registration goes down libims releases it and does not bind it
-again, so the client never starts, no SAs are installed, and the stack falls back to registering in
-the clear. The P-CSCF requires RFC 3329, so it refuses.
+**It is intermittent.** Six boots observed on one build with no configuration difference between
+them: four registered, two did not. Reproducible on demand in one direction only, by toggling
+airplane mode, which drops the IMS PDN and lands in the same state.
 
-A fix has to make the re-registration path re-establish IPsec, or restart `Ims4` when registration
-reaches OFFLINE. Restarting it is only safe by reboot, so the first is the real answer.
+**Recovery, cheapest first.** A reboot usually clears it. When it does not, `pm clear com.lge.ims`
+followed by a reboot has worked every time. A factory wipe is NOT required; the wipe that appeared
+to fix this on 2026-10-09 only did what `pm clear` does.
+
+**Ruled out, each by evidence rather than argument:**
+
+- *The carrier profile.* `CA_TARGET` hardcodes `VZW` and the device runs a T-Mobile MVNO, which
+  looks like a perfect explanation. It is not: with `VZW` still hardcoded and no
+  `persist.lg.ims.pref_operator` override, registration succeeds on most boots.
+- *`persist.service.privacy.enable=1`.* Correlated with failure across four observations, which was
+  enough for me to state it as the cause. A controlled single-variable run then registered fine with
+  it set. Coincidence.
+- *Stale `/data` as a one-way door.* `pm clear` fixes it, so nothing is permanently poisoned.
+- *The IPsec helpers being absent.* None of the documented failure strings appear
+  (`IsActiveIPSecClient`, `Pipe_Write send failed`, `IPSEC ERROR`, `add policy is failed`). The
+  stack is not failing to bring IPsec up; it never asks for it.
+- *ISIM readiness.* `APPTYPE_ISIM,APPSTATE_READY` is present in both the working and failing boots.
+  The gap from ISIM ready to first REGISTER was 8.8 s and 36.4 s on two boots that worked, 37.9 s
+  and 38.2 s on two that failed, which hints at timing but does not separate them.
+
+**The next step that would actually settle it** is to find what `RegParameter` reads before line
+588. It is native, in libims, so that means disassembly around the log site rather than more
+log watching. Everything cheaper has now been tried.
 
 ### Two earlier explanations for this, both wrong
 
