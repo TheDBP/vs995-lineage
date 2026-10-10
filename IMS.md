@@ -1346,6 +1346,32 @@ If carrier-agnostic profile selection is wanted, do it through
 which is the documented override. Setting a property from a boot script keeps class initialization
 out of it. Do not call into app code from that stub's `<clinit>`.
 
+## Planned: carrier-agnostic profile selection through the property, not the stub
+
+`OperatorInfo` reads `persist.lg.ims.pref_operator` into `PREFERENCE_OPERATOR` and treats it as an
+override of `TARGET_OPERATOR`. That is the supported seam, and it avoids the failure recorded above:
+nothing is called from a class initializer, so a wrong answer degrades to the burned-in value rather
+than stalling IMS startup.
+
+Shape of the change:
+
+- `init` triggers on `gsm.operator.numeric` (the serving network, which is what the IMS core belongs
+  to) and `setprop persist.lg.ims.pref_operator` from a small MCC/MNC table. Keying on the serving
+  network rather than the SIM keeps MVNOs off the table: a Mint SIM reads 310240 while the network
+  reads 310260.
+- `persist.lg.ims.` needs a `property_contexts` prefix so `init` may set it, the same way
+  `persist.lg.data.` was added.
+- The property is `persist.`, and `gsm.operator.numeric` only appears once the modem attaches, which
+  can be after `Ims4` starts. So the value applies from the *next* boot. That is acceptable for a
+  setting that converges and never changes again, but it does mean first boot after a wipe uses the
+  burned-in value.
+
+**Validate before shipping.** There is no evidence yet that `TMO` behaves better than `VZW` on this
+handset: the boots that registered successfully did so with `VZW` burned in and no override, and the
+one period with `pref_operator=TMO` set by hand did not register. Changing the profile while the 421
+below is still unexplained would confound both. Settle the 421 first, then evaluate this against a
+known baseline.
+
 ## OPEN (2026-10-10): registration intermittently goes out with no security headers
 
 Not solved. An earlier revision of this section claimed it was, and claimed the cause was that
