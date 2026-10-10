@@ -1299,8 +1299,18 @@ boot. That is how every build before this one was tested. Once a PIN exists:
 LG's stack registers on startup and does not meaningfully retry, so "registers then drops" and
 "worked before I set a PIN" are the same bug wearing different clothes. Check it with:
 
-    dumpsys package com.lge.ims | grep -i directBoot
-    dumpsys activity processes | grep com.lge.ims
+    dumpsys user | grep State     # RUNNING_LOCKED vs RUNNING_UNLOCKED
+    ps -A | grep lge.ims          # zero processes while RUNNING_LOCKED
+
+Measured 2026-10-09, reboot at 20:49:07, boot completed 20:50:34, lock screen left up: user 0
+`RUNNING_LOCKED` and `com.lge.ims` at **zero processes**. The manifest is the authority, not
+`dumpsys package`, whose flags show `PERSISTENT` and nothing about direct boot:
+
+    aapt2 dump xmltree Ims4.apk --file AndroidManifest.xml | grep -iE "directBootAware|persistent"
+    A: android:persistent(0x0101000d)=true        # and no directBootAware attribute at all
+
+`dataDir=/data/user/0/com.lge.ims` is credential-encrypted, which is why making it direct-boot-aware
+is not simply a manifest edit.
 
 Making it direct-boot-aware is not obviously safe: it keeps SIP credentials and registration state
 in CE storage, so an early start would read an empty profile. The cheaper fix is to make
